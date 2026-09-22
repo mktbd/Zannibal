@@ -1,0 +1,40 @@
+@import "tailwindcss";
+
+/*
+ * mktbd design tokens.
+ * Single source of truth for color, type, radius and layout primitives.
+ * See docs/MKTBD_SPEC.md section 11 (Design System) for the approved rationale.
+ * Tailwind v4 turns every `--color-*` / `--radius-*` / `--font-*` entry below
+ * into matching utility classes (e.g. --color-accent-yellow -> bg-accent-yellow).
+ */
+@theme {
+  /* Typography */
+  --font-sans: var(--font-figtree), ui-sans-serif, system-ui, sans-serif;
+
+  /* Core monochrome palette */
+  --color-black: #000000;
+  --color-near-black: #111111;
+  --color-white: #ffffff;
+  --color-off-white: #f5f5f3;
+  --color-light-grey: #e7e7e5;
+  --color-muted: #6b6b6b;
+
+  /* mktbd editorial accent -- use sparingly, see spec section 11 */
+  --color-accent-yellow: #fff200;
+
+  /* Geometry: sharp-to-subtle radii only, no SaaS-style bubbly corners */
+  --radius-none: 0px;
+  --radius-sm: 2px;
+  --radius-DEFAULT: 4px;
+}
+
+/* Non-Tailwind-namespaced tokens (layout primitives referenced directly in CSS/JS) */
+:root {
+  --content-max-width: 1280px;
+  --content-padding-inline: 1.5rem;
+}
+
+body {
+  background: var(--color-white);
+  color: var(--color-black);
+}
