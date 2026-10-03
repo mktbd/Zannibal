@@ -1,7 +1,11 @@
 /**
- * Shared content model types, mirroring the approved data model in
- * docs/MKTBD_SPEC.md. These describe shape only — no data-fetching logic
- * (Supabase queries/tables) is implemented yet.
+ * Shared content model types, mirroring the real Postgres schema in
+ * supabase/migrations/. These describe shape only — the query functions in
+ * lib/data/ are responsible for mapping DB rows onto these types.
+ *
+ * Kept hand-written for now (see docs/SUPABASE_SETUP.md "Regenerating
+ * database types" for the plan to supplement/replace this with
+ * `supabase gen types typescript` once a live project exists).
  */
 
 export type ContentStatus = "draft" | "published";
@@ -9,13 +13,13 @@ export type ContentStatus = "draft" | "published";
 export interface Tag {
   id: string;
   name: string;
-  slug: string;
+  normalizedName: string;
 }
 
 export interface AnalysisSlide {
   id: string;
-  order: number;
-  imageUrl: string;
+  position: number;
+  storagePath: string;
 }
 
 export interface Analysis {
@@ -23,10 +27,12 @@ export interface Analysis {
   title: string;
   slug: string;
   publicationDate: string;
-  tags: Tag[];
   linkedinUrl: string | null;
-  slides: AnalysisSlide[];
   status: ContentStatus;
+  slides: AnalysisSlide[];
+  tags: Tag[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 export type CaseStudyFormat = "PDF";
@@ -35,29 +41,40 @@ export interface CaseStudy {
   id: string;
   title: string;
   slug: string;
-  coverImageUrl: string;
-  shortDescription: string;
-  productDescription: string;
+  coverImagePath: string | null;
+  shortDescription: string | null;
+  productDescription: string | null;
   priceBdt: number;
-  industry: string;
-  tags: Tag[];
-  pageCount: number;
+  industry: string | null;
+  pageCount: number | null;
   publicationDate: string;
   format: CaseStudyFormat;
   status: ContentStatus;
+  tags: Tag[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 export type OrderStatus = "pending" | "fulfilled" | "invalid";
 
 export interface Order {
   id: string;
+  orderNumber: string;
   customerName: string;
-  email: string;
+  customerEmail: string;
   bkashNumber: string;
   bkashTransactionNumber: string;
   caseStudyId: string | null;
   caseStudyTitleSnapshot: string;
-  priceSnapshotBdt: number;
-  submittedAt: string;
+  priceBdtSnapshot: number;
   status: OrderStatus;
+  submittedAt: string;
+  updatedAt: string;
+}
+
+export type ProfileRole = "user" | "admin";
+
+export interface Profile {
+  id: string;
+  role: ProfileRole;
 }

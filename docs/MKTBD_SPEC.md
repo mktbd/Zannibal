@@ -313,13 +313,20 @@ app/
       page.tsx                Case Studies catalogue      /case-studies
       [slug]/page.tsx          Case Study product page     /case-studies/[slug]
   admin/
-    layout.tsx               Admin shell (nav: Dashboard/Analysis/Case
-                              Studies/Tags/Orders)
-    page.tsx                  Dashboard                   /admin
-    analysis/page.tsx         Analysis management         /admin/analysis
-    case-studies/page.tsx     Case Study management        /admin/case-studies
-    tags/page.tsx             Tag management                /admin/tags
-    orders/page.tsx           Order review                  /admin/orders
+    login/
+      page.tsx                 Login form                  /admin/login
+      actions.ts                signInWithPassword Server Action
+                                (unguarded — must not sit behind the
+                                (dashboard) layout's admin check)
+    (dashboard)/              Route group: every authenticated-admin-only
+                              screen, no URL segment added
+      layout.tsx               Sidebar nav + requireAdmin() guard + logout
+      actions.ts                 signOut Server Action
+      page.tsx                   Dashboard                   /admin
+      analysis/page.tsx          Analysis management         /admin/analysis
+      case-studies/page.tsx      Case Study management        /admin/case-studies
+      tags/page.tsx              Tag management                /admin/tags
+      orders/page.tsx            Order review                  /admin/orders
 
 components/
   layout/
@@ -332,22 +339,50 @@ lib/
     server.ts                Server Supabase client (anon key, cookie-based
                               auth, for Server Components/Actions)
     admin.ts                  Privileged server-only client (service-role
-                              key) — bypasses RLS, must never reach the browser
+                              key) — bypasses RLS, must never reach the
+                              browser; not yet called from anywhere (no
+                              feature in this stage needs it)
+  auth/
+    admin.ts                 requireAdmin() — the authoritative server-side
+                              admin-role check, used by the protected admin
+                              layout
+  data/
+    analysis.ts               getPublishedAnalysisBySlug() — minimal,
+                               strongly typed, never exposes drafts
+    case-studies.ts            getPublishedCaseStudyBySlug() — same contract
   types/
     content.ts                Shared TS types for Analysis, CaseStudy, Tag,
-                               Order (shape only, no data-fetching logic yet)
+                               Order, Profile — mirrors the real schema in
+                               supabase/migrations/
+
+proxy.ts                     Next.js 16 "proxy" (middleware rename): session
+                              refresh + redirects unauthenticated /admin/*
+                              visitors to /admin/login. Defense-in-depth
+                              only — requireAdmin() is the real gate.
+
+supabase/
+  config.toml                 Local Supabase CLI config (from `supabase init`)
+  migrations/                  Version-controlled schema — see
+                                docs/SUPABASE_SETUP.md for the full list and
+                                how to apply them
 
 docs/
   MKTBD_SPEC.md              This document
+  SUPABASE_SETUP.md           Supabase project setup, migrations, first-admin
+                              provisioning, Storage config, security
+                              assumptions
 ```
 
 All public routes live in the `(public)` route group so the Admin shell
 (different layout, no public header/footer) can live alongside them
-without affecting the public URL structure.
+without affecting the public URL structure. Inside `app/admin/`, a second
+route group (`(dashboard)`) separates every authenticated-admin-only screen
+from `/admin/login`, which must stay outside the admin-role guard — a
+login page behind its own login requirement would be a redirect loop.
 
-None of the above pages are visually finished — they are placeholder
-shells that confirm routing/architecture only, per the current
-implementation stage (see section 16 for stage tracking convention).
+None of the admin or public pages are visually finished — they remain
+placeholder shells (now auth-protected) per the current implementation
+stage (see section 16).
 
 ### Notes for Next.js 16 (read before writing new code)
 
@@ -546,3 +581,43 @@ Not yet done (future stages): visual design of Home/Analysis/Case
 Studies/Admin, Supabase schema + RLS policies, Supabase Auth wiring,
 Analysis carousel viewer, search/filter, Case Study purchase flow, Admin
 CRUD screens, image/file storage policies.
+
+### Stage 2 — Data, Storage, Security, Admin Auth (this task)
+- Full Postgres schema as version-controlled migrations
+  (`supabase/migrations/`): `profiles` (admin authorization), `tags`
+  (normalized, deduped), `analyses` + `analysis_slides`, `case_studies`,
+  `analysis_tags` + `case_study_tags` (join tables), `orders`
+  (price/title-snapshotted, `ON DELETE SET NULL` to `case_studies`).
+- Row Level Security enabled on every table; public/anon can read only
+  published content (and only tags/slides/join-rows that trace back to
+  published content — drafts can't leak through a join); all writes are
+  admin-only; Orders have no public INSERT policy at all (deferred to the
+  future purchase-flow task's server-side boundary).
+- `editorial-media` Storage bucket (public read, 5 MB limit, image MIME
+  types only, admin-only write) for Analysis slides and Case Study covers.
+  No PDF storage — paid fulfilment stays manual.
+- Supabase Auth wired up: `/admin/login` (email+password), logout, session
+  refresh via `proxy.ts`. Authoritative admin-role check in
+  `lib/auth/admin.ts` (`requireAdmin()`), backed by the same `is_admin()`
+  check enforced in RLS — a bypass of the app-level check still couldn't
+  perform any admin-only database operation.
+- `lib/types/content.ts` updated to match the real schema (field-name
+  corrections only, e.g. `Tag` no longer has an invented `slug`).
+- Two minimal public data-access functions
+  (`getPublishedAnalysisBySlug`/`getPublishedCaseStudyBySlug`) — no
+  listing/search/admin-CRUD functions yet.
+- `docs/SUPABASE_SETUP.md` added: project setup, migration workflow,
+  first-admin provisioning, Storage config, type-gen workflow, security
+  assumptions.
+- Verified: the full migration set applies cleanly and a 27-assertion RLS
+  test matrix (anon/non-admin/admin × read/write/storage/tag-dedup/FK-
+  restrict) passes against a local Postgres instance standing in for
+  Supabase's platform schema. See docs/SUPABASE_SETUP.md and the Prompt 02
+  completion report for exactly what that does and doesn't cover.
+
+Not yet done (future stages): visual design of any page, Admin CRUD
+interfaces (Analysis/Case Study/Tag editors, slide upload + drag-reorder),
+Analysis carousel viewer, search/filter UI, the public order-submission
+boundary + manual purchase form, Order management UI, a live Supabase
+project (no credentials exist yet — see the Prompt 02 completion report for
+what that blocks).
