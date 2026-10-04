@@ -1,6 +1,6 @@
 export default function CaseStudiesPage() {
   return (
-    <div className="mx-auto max-w-[var(--content-max-width)] px-6 py-24">
+    <div className="page-container py-24">
       <h1 className="text-3xl font-extrabold">
         Deep Dive into Our Case Studies
       </h1>

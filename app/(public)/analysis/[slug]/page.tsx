@@ -6,7 +6,7 @@ export default async function AnalysisDetailPage({
   const { slug } = await params;
 
   return (
-    <div className="mx-auto max-w-[var(--content-max-width)] px-6 py-24">
+    <div className="page-container py-24">
       <h1 className="text-3xl font-extrabold">Analysis: {slug}</h1>
       <p className="mt-4 max-w-prose text-muted">
         Analysis viewer placeholder for slug &quot;{slug}&quot;. The carousel

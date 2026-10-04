@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Figtree } from "next/font/google";
+import { SITE } from "@/lib/site";
 import "./globals.css";
 
 const figtree = Figtree({
@@ -10,7 +11,20 @@ const figtree = Figtree({
 
 export const metadata: Metadata = {
   title: "mktbd",
-  description: "mktbd breaks down how businesses grow in Bangladesh.",
+  description: SITE.tagline,
+  applicationName: SITE.name,
+  openGraph: {
+    siteName: SITE.name,
+    title: SITE.name,
+    description: SITE.tagline,
+    type: "website",
+    locale: "en_BD",
+  },
+  twitter: {
+    card: "summary",
+    title: SITE.name,
+    description: SITE.tagline,
+  },
 };
 
 export default function RootLayout({
@@ -19,8 +33,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body className={`${figtree.variable} font-sans antialiased`}>
+    // The font variable must be on <html>: Tailwind resolves --font-sans at
+    // :root, so a variable defined only on <body> would never reach it and
+    // every page would silently fall back to the system font stack.
+    <html lang="en" className={figtree.variable}>
+      <body className="font-sans antialiased">
         {children}
       </body>
     </html>

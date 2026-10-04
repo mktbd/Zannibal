@@ -1,6 +1,6 @@
 export default function AnalysisPage() {
   return (
-    <div className="mx-auto max-w-[var(--content-max-width)] px-6 py-24">
+    <div className="page-container py-24">
       <h1 className="text-3xl font-extrabold">
         Armchair Analysis about Bangladeshi Businesses
       </h1>

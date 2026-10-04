@@ -350,8 +350,12 @@ app/
 
 components/
   layout/
-    site-header.tsx          Public header (logo, Analysis, Case Studies)
-    site-footer.tsx           Lean public footer
+    site-header.tsx          Public header: text wordmark + primary nav (black)
+    site-nav.tsx              Client nav with current-page marker
+    site-footer.tsx           Lean public footer (black)
+  site/
+    primitives.tsx            Container, Eyebrow, SectionHeading, ButtonLink,
+                              TextLink, Highlight
   admin/
     admin-sidebar.tsx         Admin nav: sidebar (lg+), menu disclosure below
     page-header.tsx            Page title + description + contextual actions
@@ -388,6 +392,8 @@ lib/
                               and ownership checks, public URLs
   validation.ts              Server-side field parsers (dates, URLs, BDT…)
   format.ts                  Date, Dhaka date-time and BDT formatting
+  site.ts                    Public identity: name, tagline, primary nav,
+                              LinkedIn URL (null until provided)
   orders.ts                  Order status enum, labels, search columns
   search.ts                  Literal ILIKE helpers (likePattern, ilikeAnyFilter)
   data/
@@ -820,4 +826,55 @@ Still open: Orders management (03C), public pages.
   deletion, mobile layout and keyboard use.
 
 Still open: public pages and the public purchase flow (later prompts).
+
+### Stage 4A — Public design system + global shell (this task)
+- Shell: `app/(public)/layout.tsx` wraps every public route (`/`,
+  `/analysis`, `/case-studies` and their `[slug]` pages) in a `.site`
+  wrapper with skip link, header, `<main id="main">` and footer; it sets
+  the public title template (`%s | mktbd`) and a black theme-color. `/admin`
+  keeps its own layout and never renders inside it.
+- Typography: Figtree only, via `next/font/google` (downloaded at build
+  and self-hosted; no runtime request to Google). Fixed a Prompt 01 defect:
+  the font variable was on `<body>`, but Tailwind resolves `--font-sans` at
+  `:root`, so Figtree had never actually rendered anywhere (public or
+  Admin). The variable now sits on `<html>`; Admin picks up Figtree too,
+  with no other Admin change. Fluid type tokens: `text-display` (800,
+  44→92px), `text-headline` (32→56px), `text-title` (24→34px), `text-lede`
+  (18→21px); body stays 16px. Uppercase only for small eyebrow labels.
+- Palette: unchanged tokens (black, near-black, white, off-white, light
+  grey, muted, accent yellow). Yellow is used only for the current-page
+  underline, the eyebrow marker and `<Highlight>`; buttons and links are
+  black/white.
+- Layout: `page-container` utility -- max 1280px, side padding fluid from
+  16px (375px wide) to 40px. The four existing placeholder pages only had
+  their wrapper switched to it so they align with the header.
+- Header: black, not sticky; lowercase text wordmark (no logo asset exists)
+  linking home; Analysis and Case Studies on the right, which fit on one row
+  even at 375px, so there is no collapsed menu. Current section:
+  `aria-current="page"` plus a thin yellow underline.
+- Footer: black; wordmark, Analysis, Case Studies, LinkedIn, copyright --
+  nothing else. LinkedIn renders only when `SITE.linkedinUrl` is set; no
+  verified URL exists yet, so it is currently hidden (the previous footer
+  linked to the generic linkedin.com homepage).
+- Primitives (`components/site/primitives.tsx`): Container, Eyebrow,
+  SectionHeading, ButtonLink (primary / secondary / inverse), TextLink
+  (optional arrow), Highlight. Links stay links; targets are at least 44px
+  in header and footer.
+- Base styles scoped to `.site`: visible focus ring (black, white on black
+  surfaces), yellow text selection, and prefers-reduced-motion collapsing
+  transitions/animations.
+- Metadata: site name, description (the positioning line), Open Graph and
+  Twitter basics, `en_BD`; public title template. No favicon, logo or OG
+  image assets exist, so none were added or invented; `metadataBase` waits
+  for the production domain.
+- `/` is a clearly temporary review page (to be replaced in Prompt 04B).
+- Testing: lint, typecheck, `npm test` (15), production build; browser QA
+  at 375 / 768 / 1280 / 1440 on every public route (overflow, one-row
+  header, alignment, landmarks, single h1, touch targets, current-page
+  marker, Figtree in use, layout shift, keyboard order, focus ring, skip
+  link, reduced motion, metadata, /admin isolation, console) -- 179 checks;
+  Admin regression via the 03A (49), 03B (112) and 03C (74) suites.
+
+Open: mktbd's LinkedIn URL, a logo/favicon asset, and the production
+domain for `metadataBase` are still to be provided.
 

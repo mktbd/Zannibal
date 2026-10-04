@@ -1,15 +1,27 @@
 import Link from "next/link";
+import { Container } from "@/components/site/primitives";
+import { SITE } from "@/lib/site";
+import { SiteNav } from "./site-nav";
 
+/**
+ * Public header: lowercase text wordmark (no logo asset exists yet) linking
+ * home, and the two primary destinations. Black, so it runs straight into
+ * the black editorial heroes of Home / Analysis / Case Studies. Not sticky:
+ * pages are reading-first and there are only two destinations.
+ */
 export function SiteHeader() {
   return (
-    <header className="flex items-center justify-between border-b border-light-grey px-6 py-4">
-      <Link href="/" className="text-lg font-extrabold tracking-tight">
-        mktbd
-      </Link>
-      <nav className="flex items-center gap-6 text-sm font-medium">
-        <Link href="/analysis">Analysis</Link>
-        <Link href="/case-studies">Case Studies</Link>
-      </nav>
+    <header className="on-dark bg-black text-white">
+      <Container className="flex min-h-16 items-center justify-between gap-4">
+        <Link
+          href="/"
+          className="-ml-1 inline-flex min-h-11 items-center px-1 text-[1.375rem] leading-none font-extrabold tracking-[-0.03em] sm:text-2xl"
+        >
+          {SITE.name}
+          <span className="sr-only"> — home</span>
+        </Link>
+        <SiteNav />
+      </Container>
     </header>
   );
 }
