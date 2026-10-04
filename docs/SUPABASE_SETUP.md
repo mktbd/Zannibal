@@ -55,6 +55,7 @@ commented; read them in order to understand the schema:
 | `20261003000006_content_tags.sql` | `analysis_tags`, `case_study_tags`, and the tag-visibility policy that depends on them |
 | `20261003000007_orders.sql` | `orders`, order-number generation |
 | `20261003000008_storage.sql` | `editorial-media` bucket + Storage policies |
+| `20261004000009_storage_restrict_listing.sql` | replaces the public `SELECT` policy on `storage.objects` with an admin-only one, so the bucket can't be listed anonymously |
 
 **Against a hosted project**, using the [Supabase CLI](https://supabase.com/docs/guides/local-development/cli/getting-started)
 (already a devDependency — run via `npx supabase`):
@@ -126,7 +127,12 @@ is in each migration's comments):
 One public bucket, `editorial-media`, created by
 `20261003000008_storage.sql`:
 
-- Public read (editorial images need to be directly displayable).
+- Public bucket: images are delivered by URL
+  (`/storage/v1/object/public/editorial-media/...`) without consulting
+  `storage.objects` RLS.
+- Listing/API `SELECT` is admin-only since
+  `20261004000009_storage_restrict_listing.sql` (originally public in
+  migration 8), so anonymous clients cannot enumerate paths.
 - 5 MB per-file limit, restricted to `image/jpeg`, `image/png`,
   `image/webp`.
 - Insert/update/delete restricted to admins via the same `is_admin()`
@@ -135,12 +141,19 @@ One public bucket, `editorial-media`, created by
 No bucket exists for the paid Case Study PDF — per spec, that's never
 uploaded to the CMS in V1; fulfilment is manual.
 
-Path convention (enforced by the future Admin upload UI, not the database):
+Path convention (enforced by the Admin CMS, not the database; the comment
+in migration 8 predates it). Object names are random UUIDs so they can't be
+guessed; slide order lives in `analysis_slides.position`, not in the name:
 
 ```
-analysis/{analysis_id}/{position}-{filename}
-case-studies/{case_study_id}/cover.{ext}
+analysis/{analysis_id}/{uuid}.{jpg|png|webp}
+case-studies/{case_study_id}/cover-{uuid}.{jpg|png|webp}
 ```
+
+Uploads go straight from the browser to Storage under the admin's own
+session. After a save or delete succeeds, the CMS removes any object in
+that record's folder that no row references (replaced covers, removed
+slides, abandoned uploads).
 
 ## 7. Auth URL / redirect configuration
 

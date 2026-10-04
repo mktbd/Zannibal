@@ -324,10 +324,19 @@ app/
       actions.ts                 signOut Server Action
       loading.tsx / error.tsx    Shared loading and error states
       page.tsx                   Dashboard (live counts)     /admin
-      analysis/page.tsx          Analysis (placeholder)      /admin/analysis
-      analysis/new/page.tsx      New Analysis (placeholder)  /admin/analysis/new
-      case-studies/page.tsx      Case Studies (placeholder)  /admin/case-studies
-      case-studies/new/page.tsx  New Case Study (placeholder)
+      analysis/                  Analysis CMS                /admin/analysis
+        page.tsx                   List: search, status filter
+        new/page.tsx               Create (details first)     …/new
+        [id]/edit/page.tsx         Edit + delete              …/[id]/edit
+        [id]/preview/page.tsx      Admin-only carousel preview …/[id]/preview
+        actions.ts                 saveAnalysis / deleteAnalysis Server Actions
+        analysis-editor.tsx        Client editor form
+        slide-manager.tsx          Upload, reorder (drag + Up/Down), remove
+      case-studies/              Case Studies CMS            /admin/case-studies
+        page.tsx, new/, [id]/edit/, [id]/preview/   (same shape as analysis/)
+        actions.ts                 saveCaseStudy / deleteCaseStudy
+        case-study-editor.tsx      Client editor form
+        cover-uploader.tsx         Single cover upload/replace/remove
       tags/                      Tag management              /admin/tags
         page.tsx                   List with usage counts
         actions.ts                 create/rename/delete Server Actions
@@ -344,6 +353,15 @@ components/
     page-header.tsx            Page title + description + contextual actions
     module-placeholder.tsx     Stand-in for not-yet-built CMS modules
     ui.ts                      Shared button/input class strings
+    tag-selector.tsx           Shared tag combobox (typeahead, inline create)
+    editor-parts.tsx           Editor action bar, delete confirm, notices,
+                               auto-slug + unsaved-changes hooks
+    editor-state.ts            Editor action result type + notice texts
+    form-field.tsx             Label/hint/error wrapper
+    list-filters.tsx           Title search + status filter (GET form)
+    status-badge.tsx           Draft / Published marker
+    preview-carousel.tsx       Simple slide viewer for admin previews
+    upload.ts                  Browser → Storage upload with progress
 
 lib/
   supabase/
@@ -361,6 +379,11 @@ lib/
                               admin page and every admin Server Action
   tags.ts                    Tag name clean/normalize/validate helpers
                               (mirror tags.normalized_name)
+  slug.ts                    slugify/validateSlug (mirror *_slug_format)
+  media.ts                   Image type/size rules, Storage path builders
+                              and ownership checks, public URLs
+  validation.ts              Server-side field parsers (dates, URLs, BDT…)
+  format.ts                  Date and BDT display formatting
   data/
     analysis.ts               getPublishedAnalysisBySlug() — minimal,
                                strongly typed, never exposes drafts
@@ -368,6 +391,13 @@ lib/
     admin/
       dashboard.ts             getDashboardCounts() — admin-session counts
       tags.ts                  getTagsWithUsage() — tags + usage counts
+      content.ts               Analysis/Case Study list + edit reads
+      content-mutations.ts     Tag-link sync, Storage list/cleanup, slug
+                               conflict lookup (session client only)
+
+tests/
+  unit/                      node:test unit tests for slug/validation/media
+                              rules (`npm test`, no extra dependencies)
   types/
     content.ts                Shared TS types for Analysis, CaseStudy, Tag,
                                Order, Profile — mirrors the real schema in
@@ -669,7 +699,66 @@ follow for an action, so the page shows the error boundary instead of
 returning to login. Nothing is written. A fix would be for the proxy to let
 requests carrying the `Next-Action` header through, leaving the redirect to
 `requireAdmin()` inside the action.
+(Resolved in Stage 3B -- see below.)
 
 Not yet done: Analysis and Case Study editors (03B), Orders management
 (03C), public pages.
 
+### Stage 3B — Analysis + Case Studies CMS (this task)
+- `/admin/analysis` and `/admin/case-studies` replace their placeholders:
+  lists (title search, All/Published/Draft filter, empty states), create
+  (`…/new`), edit + delete (`…/[id]/edit`) and an admin-only preview
+  (`…/[id]/preview`). No schema change was needed; migrations 1–9 are
+  unchanged.
+- Explicit status actions: Save draft / Publish (drafts), Update /
+  Unpublish (published). Publishing validates server-side: Analysis needs
+  title, slug, date and at least one slide; Case Study additionally needs
+  cover, short and product descriptions, price > 0, industry and page
+  count. A published record can't be saved into an unpublishable state.
+- Slugs auto-follow the title on create until edited by hand, never change
+  on their own when editing, are normalised server-side to the database
+  format, and a uniqueness conflict names the record that owns the slug.
+- Tags: one shared combobox (typeahead, keyboard, inline create) over the
+  single reservoir; inline creation uses the same code path and
+  normalisation as `/admin/tags`, and a normalised duplicate is reported,
+  never merged.
+- Images: uploaded from the browser straight to the `editorial-media`
+  bucket under the admin session (Storage RLS), with client-side type/size
+  checks, per-file progress, thumbnails and uncropped display. Paths are
+  UUID-named (`analysis/{id}/{uuid}.ext`, `case-studies/{id}/cover-{uuid}.ext`)
+  and Server Actions accept only paths inside the record's own folder that
+  exist in Storage. Image upload is available once a draft has been saved,
+  so abandoned new records can't leave files behind.
+- Slide order: drag-and-drop plus accessible Up/Down buttons; saved as one
+  upsert of the full ordered list (single statement, so the deferred
+  `analysis_slides_unique_position` constraint is checked once at commit).
+- Write ordering (PostgREST has no multi-request transaction): unpublish
+  first, then fields, slides, tags, publish last; Storage objects are
+  deleted only after the database write that stops referencing them
+  succeeds, and each save/delete also sweeps unreferenced objects in that
+  record's folder (replaced covers, removed slides, abandoned uploads). A
+  failed step reports exactly what was not saved.
+- Deleting an Analysis cascades to slides and tag links (existing FKs) and
+  empties its Storage folder. Deleting a Case Study keeps its orders
+  (`case_study_id` → NULL via the existing FK) with their title/price
+  snapshots untouched; the confirmation shows how many orders reference it.
+- Price: `case_studies.price_bdt` is `NOT NULL DEFAULT 0`, so a blank
+  draft price is stored as 0 and treated as "not set"; publishing requires
+  a price above 0.
+- Every page and Server Action calls `requireAdmin()`; all reads/writes use
+  the session client under RLS (service-role client still unused).
+- Testing: `npm test` (11 unit tests); plus a 95-check browser suite run
+  against a local Supabase stack (real Auth/PostgREST/Storage with
+  migrations 1–9 applied), covering the workflows, Storage cleanup and
+  anonymous/non-admin rejection. Production was only read, never written.
+
+- Session-expiry fix (the Stage 3A known issue): `proxy.ts` no longer
+  redirects Server Action calls (POST with the `Next-Action` header, the
+  same test Next.js uses). It still refreshes the session for them; the
+  action's own `requireAdmin()` then redirects an expired, signed-out or
+  forged session to `/admin/login` as a client navigation, instead of the
+  page falling into the error boundary. Page requests (any method without
+  that header, and GETs even with it) are still redirected by the proxy,
+  and the `(dashboard)` layout re-checks every render.
+
+Still open: Orders management (03C), public pages.

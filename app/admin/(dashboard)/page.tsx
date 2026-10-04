@@ -113,7 +113,7 @@ export default async function AdminDashboardPage() {
       {counts.analysis.total === 0 && counts.caseStudies.total === 0 ? (
         <p className="mt-6 text-sm text-muted">
           No content has been created yet. Start with a new Analysis or Case
-          Study once those editors are available.
+          Study.
         </p>
       ) : null}
     </>

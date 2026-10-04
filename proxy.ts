@@ -44,7 +44,17 @@ export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const isLoginRoute = pathname === "/admin/login";
 
-  if (!user && !isLoginRoute) {
+  // A Server Action call (POST + Next-Action header, as Next.js itself
+  // detects it) must not get a redirect from here: the action client can't
+  // follow one and the page falls into the error boundary (e.g. a session
+  // that expired while an admin page was open). Let it through instead --
+  // every admin Server Action calls requireAdmin(), whose redirect() the
+  // client turns into a navigation to /admin/login. Page requests are
+  // still redirected here, and the (dashboard) layout re-checks anyway.
+  const isServerAction =
+    request.method === "POST" && request.headers.has("next-action");
+
+  if (!user && !isLoginRoute && !isServerAction) {
     const url = request.nextUrl.clone();
     url.pathname = "/admin/login";
     return NextResponse.redirect(url);

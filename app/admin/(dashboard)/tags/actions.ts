@@ -49,31 +49,57 @@ async function duplicateMessage(
     : "A tag with that name already exists.";
 }
 
+type InsertTagResult =
+  | { ok: true; tag: { id: string; name: string } }
+  | { ok: false; message: string };
+
+/**
+ * The single create path for tags, used by the Tags screen and by the
+ * inline "Create tag" option in the Analysis/Case Study editors, so both
+ * apply the same cleaning, validation and duplicate handling.
+ */
+async function insertTag(rawName: string): Promise<InsertTagResult> {
+  const name = cleanTagName(rawName);
+  const invalid = validateTagName(name);
+  if (invalid) {
+    return { ok: false, message: invalid };
+  }
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("tags")
+    .insert({ name })
+    .select("id, name")
+    .single<{ id: string; name: string }>();
+
+  if (error) {
+    if (error.code === UNIQUE_VIOLATION) {
+      return { ok: false, message: await duplicateMessage(supabase, name) };
+    }
+    console.error("[admin/tags] create failed:", error.message);
+    return { ok: false, message: "The tag could not be created. Try again." };
+  }
+
+  revalidateTagViews();
+  return { ok: true, tag: data };
+}
+
 export async function createTag(
   _prev: TagActionState,
   formData: FormData,
 ): Promise<TagActionState> {
   await requireAdmin();
 
-  const name = cleanTagName(String(formData.get("name") ?? ""));
-  const invalid = validateTagName(name);
-  if (invalid) {
-    return { status: "error", message: invalid };
-  }
+  const result = await insertTag(String(formData.get("name") ?? ""));
+  return result.ok
+    ? { status: "success", message: `Created “${result.tag.name}”.` }
+    : { status: "error", message: result.message };
+}
 
-  const supabase = await createClient();
-  const { error } = await supabase.from("tags").insert({ name });
-
-  if (error) {
-    if (error.code === UNIQUE_VIOLATION) {
-      return { status: "error", message: await duplicateMessage(supabase, name) };
-    }
-    console.error("[admin/tags] create failed:", error.message);
-    return { status: "error", message: "The tag could not be created. Try again." };
-  }
-
-  revalidateTagViews();
-  return { status: "success", message: `Created “${name}”.` };
+/** Inline creation from the content editors' tag selector. */
+export async function createTagInline(rawName: string): Promise<InsertTagResult> {
+  await requireAdmin();
+  return insertTag(typeof rawName === "string" ? rawName : "");
 }
 
 export async function renameTag(
