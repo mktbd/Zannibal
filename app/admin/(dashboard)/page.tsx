@@ -101,7 +101,7 @@ export default async function AdminDashboardPage() {
           <Stat label="Total" value={counts.tags} />
         </StatGroup>
 
-        <StatGroup id="orders" title="Orders" href="/admin/orders" linkLabel="Open" columns={1}>
+        <StatGroup id="orders" title="Orders" href="/admin/orders?status=pending" linkLabel="Review pending" columns={1}>
           <Stat
             label="Pending"
             value={counts.pendingOrders}

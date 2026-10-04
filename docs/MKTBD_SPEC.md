@@ -342,7 +342,11 @@ app/
         actions.ts                 create/rename/delete Server Actions
         tag-create-form.tsx        Client form (useActionState)
         tag-row.tsx                Client row: inline rename, delete confirm
-      orders/page.tsx            Orders (placeholder)         /admin/orders
+      orders/                    Orders CMS                   /admin/orders
+        page.tsx                   Work queue: search, status filter
+        [id]/page.tsx              Read-only order + status   …/[id]
+        actions.ts                 updateOrderStatus (the only order mutation)
+        status-control.tsx         Explicit "Mark as …" buttons
 
 components/
   layout/
@@ -351,7 +355,7 @@ components/
   admin/
     admin-sidebar.tsx         Admin nav: sidebar (lg+), menu disclosure below
     page-header.tsx            Page title + description + contextual actions
-    module-placeholder.tsx     Stand-in for not-yet-built CMS modules
+    order-status-badge.tsx     Pending / Fulfilled / Invalid marker
     ui.ts                      Shared button/input class strings
     tag-selector.tsx           Shared tag combobox (typeahead, inline create)
     editor-parts.tsx           Editor action bar, delete confirm, notices,
@@ -383,7 +387,9 @@ lib/
   media.ts                   Image type/size rules, Storage path builders
                               and ownership checks, public URLs
   validation.ts              Server-side field parsers (dates, URLs, BDT…)
-  format.ts                  Date and BDT display formatting
+  format.ts                  Date, Dhaka date-time and BDT formatting
+  orders.ts                  Order status enum, labels, search columns
+  search.ts                  Literal ILIKE helpers (likePattern, ilikeAnyFilter)
   data/
     analysis.ts               getPublishedAnalysisBySlug() — minimal,
                                strongly typed, never exposes drafts
@@ -394,10 +400,12 @@ lib/
       content.ts               Analysis/Case Study list + edit reads
       content-mutations.ts     Tag-link sync, Storage list/cleanup, slug
                                conflict lookup (session client only)
+      orders.ts                listOrders() / getOrder() (snapshots only)
 
 tests/
-  unit/                      node:test unit tests for slug/validation/media
-                              rules (`npm test`, no extra dependencies)
+  unit/                      node:test unit tests for slug/validation/media/
+                              order/search rules (`npm test`, no extra
+                              dependencies)
   types/
     content.ts                Shared TS types for Analysis, CaseStudy, Tag,
                                Order, Profile — mirrors the real schema in
@@ -762,3 +770,54 @@ Not yet done: Analysis and Case Study editors (03B), Orders management
   and the `(dashboard)` layout re-checks every render.
 
 Still open: Orders management (03C), public pages.
+
+### Stage 3C — Orders CMS + final Admin CMS validation (this task)
+- `/admin/orders` replaces the placeholder: an internal verification and
+  fulfilment queue for the V1 manual bKash flow (customer pays manually,
+  submits name / email / bKash number / transaction number, admin verifies,
+  emails the PDF by hand, records the outcome). No "New Order": orders will
+  only come from the future public purchase form, which is still
+  intentionally unbuilt (no checkout, bKash instructions, submission form,
+  confirmation page, emails or PDF delivery).
+- List: newest first; order number, title and price snapshots, customer
+  name and email, Dhaka-time submission, status (transaction number too on
+  wide screens); Pending rows carry the yellow marker and a black edge.
+  Search (order number, name, email, transaction; case-insensitive and
+  literal -- `%`, `_`, quotes and commas can't act as wildcards or alter
+  the PostgREST filter) plus an All/Pending/Fulfilled/Invalid filter via
+  URL params, as for Analysis/Case Studies. Capped at the newest 200
+  rows; older orders are reached by search.
+- Detail (`/admin/orders/[id]`): Order / Customer / Purchase groups, all
+  read-only (identifiers selectable for copying). Title and price always
+  come from the order's snapshot columns. While the Case Study exists it is
+  linked ("View Case Study", noting a later title change); once deleted the
+  page says so quietly and shows no link.
+- Status: the existing `order_status` enum only (pending, fulfilled,
+  invalid), changed by explicit "Mark as …" buttons. `updateOrderStatus`
+  calls `requireAdmin()`, validates the enum, writes only `status`, and is
+  conditional on the status the admin was looking at, so a double submit or
+  a change made in another tab is reported instead of overwritten.
+- No order deletion anywhere: no UI and no Server Action, and RLS has no
+  DELETE (or INSERT) policy for orders -- verified that even the admin's
+  token can't delete through the API. A bad order is marked Invalid.
+- Customer, payment and snapshot fields are immutable through the CMS
+  (only `status` is ever sent). Note: the database's `orders_update_admin`
+  policy itself allows an admin to update any column, so this immutability
+  is enforced by the application, not the schema; a trigger or column
+  grants would be needed to enforce it in the database.
+- Case Study deletion keeps orders: verified locally that the order
+  survives, `case_study_id` becomes NULL, every other field is unchanged
+  and the detail page renders normally.
+- Dashboard: the existing Pending Orders count now links to the pending
+  queue. Sidebar: all five modules are live (the "Soon" markers and the
+  unused placeholder component were removed).
+- No schema change; migrations 1–9 untouched. Production was only read.
+- Testing: `npm test` (15 unit tests); a 74-check Orders browser suite and
+  the 03A (49) and 03B (112) suites, all against the local Supabase stack,
+  covering status changes, stale submissions, field-injection attempts,
+  anonymous / non-admin / expired / forged / signed-out sessions, REST
+  read/update/insert/delete attempts, search and filters, Case Study
+  deletion, mobile layout and keyboard use.
+
+Still open: public pages and the public purchase flow (later prompts).
+

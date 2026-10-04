@@ -6,11 +6,11 @@ import { useState } from "react";
 import { logout } from "@/app/admin/(dashboard)/actions";
 
 const NAV_ITEMS = [
-  { href: "/admin", label: "Dashboard", available: true },
-  { href: "/admin/analysis", label: "Analysis", available: true },
-  { href: "/admin/case-studies", label: "Case Studies", available: true },
-  { href: "/admin/tags", label: "Tags", available: true },
-  { href: "/admin/orders", label: "Orders", available: false },
+  { href: "/admin", label: "Dashboard" },
+  { href: "/admin/analysis", label: "Analysis" },
+  { href: "/admin/case-studies", label: "Case Studies" },
+  { href: "/admin/tags", label: "Tags" },
+  { href: "/admin/orders", label: "Orders" },
 ] as const;
 
 function isActive(pathname: string, href: string) {
@@ -73,11 +73,6 @@ export function AdminSidebar({ email }: { email: string | undefined }) {
                     }`}
                   >
                     {item.label}
-                    {item.available ? null : (
-                      <span className="text-[11px] font-medium uppercase tracking-wide text-white/40">
-                        Soon
-                      </span>
-                    )}
                   </Link>
                 </li>
               );

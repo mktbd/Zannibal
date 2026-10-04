@@ -1,6 +1,7 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
-import { likePattern, type StatusFilter } from "@/components/admin/list-filters";
+import { type StatusFilter } from "@/components/admin/list-filters";
+import { likePattern } from "@/lib/search";
 import type { ContentStatus } from "@/lib/types/content";
 import type { TagOption } from "@/components/admin/tag-selector";
 

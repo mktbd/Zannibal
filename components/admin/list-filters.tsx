@@ -7,20 +7,31 @@ export function parseStatusFilter(value: string | undefined): StatusFilter {
   return value === "published" || value === "draft" ? value : "all";
 }
 
+const CONTENT_STATUS_OPTIONS = [
+  { value: "all", label: "All" },
+  { value: "published", label: "Published" },
+  { value: "draft", label: "Draft" },
+];
+
 /**
- * Title search + status filter for content lists. A plain GET form, so it
- * works without JavaScript and the filtered view has a shareable URL.
+ * Search + status filter for admin lists. A plain GET form, so it works
+ * without JavaScript and the filtered view has a shareable URL. Defaults
+ * to the content (Analysis / Case Studies) title search and statuses.
  */
 export function ListFilters({
   basePath,
   query,
   status,
   label,
+  searchLabel = "Search by title",
+  statusOptions = CONTENT_STATUS_OPTIONS,
 }: {
   basePath: string;
   query: string;
-  status: StatusFilter;
+  status: string;
   label: string;
+  searchLabel?: string;
+  statusOptions?: { value: string; label: string }[];
 }) {
   const filtered = query !== "" || status !== "all";
   return (
@@ -33,7 +44,7 @@ export function ListFilters({
     >
       <div className="flex flex-1 flex-col gap-1 sm:max-w-sm">
         <label htmlFor="list-q" className="text-xs font-medium text-muted">
-          Search by title
+          {searchLabel}
         </label>
         <input id="list-q" name="q" type="search" defaultValue={query} className={textInput} />
       </div>
@@ -47,9 +58,11 @@ export function ListFilters({
           defaultValue={status}
           className="rounded-sm border border-light-grey bg-white px-2 py-1.5 text-sm hover:border-muted"
         >
-          <option value="all">All</option>
-          <option value="published">Published</option>
-          <option value="draft">Draft</option>
+          {statusOptions.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
         </select>
       </div>
       <div className="flex gap-2">
@@ -64,9 +77,4 @@ export function ListFilters({
       </div>
     </form>
   );
-}
-
-/** Escapes LIKE wildcards so a search for "50%" matches literally. */
-export function likePattern(query: string): string {
-  return `%${query.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 }
