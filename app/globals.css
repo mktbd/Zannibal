@@ -38,3 +38,17 @@ body {
   background: var(--color-white);
   color: var(--color-black);
 }
+
+/* Admin keyboard focus: always visible, never colour-only on hover. */
+.admin-shell :focus-visible {
+  outline: 2px solid var(--color-black);
+  outline-offset: 2px;
+}
+
+.admin-shell .admin-sidebar :focus-visible {
+  outline-color: var(--color-accent-yellow);
+}
+
+.admin-shell #admin-main:focus-visible {
+  outline: none;
+}

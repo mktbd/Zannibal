@@ -320,18 +320,30 @@ app/
                                 (dashboard) layout's admin check)
     (dashboard)/              Route group: every authenticated-admin-only
                               screen, no URL segment added
-      layout.tsx               Sidebar nav + requireAdmin() guard + logout
+      layout.tsx               CMS shell: requireAdmin() guard + AdminSidebar
       actions.ts                 signOut Server Action
-      page.tsx                   Dashboard                   /admin
-      analysis/page.tsx          Analysis management         /admin/analysis
-      case-studies/page.tsx      Case Study management        /admin/case-studies
-      tags/page.tsx              Tag management                /admin/tags
-      orders/page.tsx            Order review                  /admin/orders
+      loading.tsx / error.tsx    Shared loading and error states
+      page.tsx                   Dashboard (live counts)     /admin
+      analysis/page.tsx          Analysis (placeholder)      /admin/analysis
+      analysis/new/page.tsx      New Analysis (placeholder)  /admin/analysis/new
+      case-studies/page.tsx      Case Studies (placeholder)  /admin/case-studies
+      case-studies/new/page.tsx  New Case Study (placeholder)
+      tags/                      Tag management              /admin/tags
+        page.tsx                   List with usage counts
+        actions.ts                 create/rename/delete Server Actions
+        tag-create-form.tsx        Client form (useActionState)
+        tag-row.tsx                Client row: inline rename, delete confirm
+      orders/page.tsx            Orders (placeholder)         /admin/orders
 
 components/
   layout/
     site-header.tsx          Public header (logo, Analysis, Case Studies)
     site-footer.tsx           Lean public footer
+  admin/
+    admin-sidebar.tsx         Admin nav: sidebar (lg+), menu disclosure below
+    page-header.tsx            Page title + description + contextual actions
+    module-placeholder.tsx     Stand-in for not-yet-built CMS modules
+    ui.ts                      Shared button/input class strings
 
 lib/
   supabase/
@@ -344,12 +356,18 @@ lib/
                               feature in this stage needs it)
   auth/
     admin.ts                 requireAdmin() — the authoritative server-side
-                              admin-role check, used by the protected admin
-                              layout
+                              admin-role check (React cache()-deduped per
+                              request), called by the admin layout, every
+                              admin page and every admin Server Action
+  tags.ts                    Tag name clean/normalize/validate helpers
+                              (mirror tags.normalized_name)
   data/
     analysis.ts               getPublishedAnalysisBySlug() — minimal,
                                strongly typed, never exposes drafts
     case-studies.ts            getPublishedCaseStudyBySlug() — same contract
+    admin/
+      dashboard.ts             getDashboardCounts() — admin-session counts
+      tags.ts                  getTagsWithUsage() — tags + usage counts
   types/
     content.ts                Shared TS types for Analysis, CaseStudy, Tag,
                                Order, Profile — mirrors the real schema in
@@ -621,3 +639,37 @@ Analysis carousel viewer, search/filter UI, the public order-submission
 boundary + manual purchase form, Order management UI, a live Supabase
 project (no credentials exist yet — see the Prompt 02 completion report for
 what that blocks).
+
+### Stage 3A — CMS Foundation (this task)
+- Authenticated CMS shell under `/admin`: black left sidebar from the `lg`
+  breakpoint (lowercase mktbd, the five approved destinations, signed-in
+  email, sign-out), a top bar with a disclosure menu on smaller screens,
+  skip link, visible keyboard focus. Yellow is used only for the active
+  nav marker and the pending-orders status marker.
+- Dashboard (`/admin`): live counts (Analysis total/published/draft, Case
+  Studies total/published/draft, total Tags, pending Orders) read with the
+  admin's own session under RLS, plus New Analysis / New Case Study quick
+  actions pointing at the 03B routes (placeholder pages for now).
+- Tags (`/admin/tags`): alphabetical list with Analysis / Case Studies /
+  total usage counts; create, inline rename, delete with confirmation.
+  Duplicate detection is the database's `tags_normalized_name_key`; the UI
+  reports the existing tag by name and never merges. In-use tags cannot be
+  deleted (UI, Server Action check, and the existing `ON DELETE RESTRICT`
+  foreign keys).
+- Every admin page and Server Action calls `requireAdmin()`; all reads and
+  writes use the session client under RLS. The service-role client is
+  still unused.
+- Analysis, Case Studies and Orders are protected placeholder modules.
+- No schema, migration, RLS, Storage or auth-flow changes.
+
+Known issue (pre-existing, not changed here): `proxy.ts` answers an
+unauthenticated Server Action POST (e.g. a session that expired on an open
+admin page) with a 307 to `/admin/login`, which the Next.js client cannot
+follow for an action, so the page shows the error boundary instead of
+returning to login. Nothing is written. A fix would be for the proxy to let
+requests carrying the `Next-Action` header through, leaving the redirect to
+`requireAdmin()` inside the action.
+
+Not yet done: Analysis and Case Study editors (03B), Orders management
+(03C), public pages.
+

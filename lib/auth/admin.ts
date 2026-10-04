@@ -1,4 +1,5 @@
 import "server-only";
+import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import type { ProfileRole } from "@/lib/types/content";
@@ -14,8 +15,13 @@ import type { ProfileRole } from "@/lib/types/content";
  * Even if this check were ever bypassed by a future code change, the same
  * profiles.role lookup is mirrored in Postgres RLS (public.is_admin()), so
  * no admin-only mutation could actually succeed anyway.
+ *
+ * Call it in every admin page and Server Action, not just the layout:
+ * layouts and pages render in parallel, and Server Actions are reachable
+ * by direct POST. Wrapped in React cache() so repeated calls within one
+ * request share a single auth/profile lookup.
  */
-export async function requireAdmin() {
+export const requireAdmin = cache(async function requireAdmin() {
   const supabase = await createClient();
 
   const {
@@ -37,4 +43,4 @@ export async function requireAdmin() {
   }
 
   return { user };
-}
+});
