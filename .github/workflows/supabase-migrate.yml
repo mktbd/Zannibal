@@ -1,0 +1,118 @@
+# TEMPORARY: one-off, manually triggered deployment of the existing Supabase
+# migrations to the linked project with the standard Supabase CLI. Remove this
+# workflow once the migrations have been deployed.
+name: Supabase migrate (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run: validate and show the migration plan only. apply: re-run every check, then push."
+        required: true
+        type: choice
+        options:
+          - dry-run
+          - apply
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supabase-migrate
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+      EXPECTED_MIGRATIONS: |
+        20261003000001_foundations.sql
+        20261003000002_profiles.sql
+        20261003000003_tags.sql
+        20261003000004_analyses.sql
+        20261003000005_case_studies.sql
+        20261003000006_content_tags.sql
+        20261003000007_orders.sql
+        20261003000008_storage.sql
+    steps:
+      - name: Validate mode
+        env:
+          MODE: ${{ inputs.mode }}
+        run: |
+          case "$MODE" in
+            dry-run|apply) echo "Mode: $MODE" ;;
+            *) echo "::error::Mode must be \"dry-run\" or \"apply\"."; exit 1 ;;
+          esac
+
+      - name: Check out repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify migration directory contains exactly the expected files
+        run: |
+          set -euo pipefail
+          expected="$(printf '%s' "$EXPECTED_MIGRATIONS" | sed '/^$/d' | LC_ALL=C sort)"
+          actual="$(find supabase/migrations -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)"
+          if [ "$expected" != "$actual" ]; then
+            echo "::error::supabase/migrations does not contain exactly the 8 expected migration files."
+            diff <(echo "$expected") <(echo "$actual") || true
+            exit 1
+          fi
+          echo "Migration directory matches the expected 8 files."
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@1dedf2c611547ede7232d26866dd3c56ab903bbb # v1.7.3
+        with:
+          version: 2.119.0
+
+      - name: Link Supabase project
+        run: supabase link --project-ref "$SUPABASE_PROJECT_ID"
+
+      - name: Show migration history before push
+        run: supabase migration list --linked
+
+      - name: Dry run and verify the migration plan
+        run: |
+          set -euo pipefail
+          supabase db push --linked --dry-run 2>&1 | tee "$RUNNER_TEMP/dry-run.log"
+          expected="$(printf '%s' "$EXPECTED_MIGRATIONS" | sed '/^$/d' | LC_ALL=C sort)"
+          planned="$(grep -oE '[0-9]{14}_[A-Za-z0-9_]+\.sql' "$RUNNER_TEMP/dry-run.log" | LC_ALL=C sort -u || true)"
+          if [ "$expected" != "$planned" ]; then
+            echo "::error::Dry-run plan does not contain exactly the 8 expected migrations."
+            diff <(echo "$expected") <(echo "$planned") || true
+            exit 1
+          fi
+          echo "Dry-run plan matches the expected 8 migrations."
+
+      - name: Dry-run complete
+        if: inputs.mode == 'dry-run'
+        run: |
+          echo "Dry-run mode: all checks passed. No migrations were pushed."
+
+      - name: Push migrations
+        if: inputs.mode == 'apply'
+        run: supabase db push --linked --yes
+
+      - name: Verify remote migration history
+        if: inputs.mode == 'apply'
+        run: |
+          set -euo pipefail
+          supabase migration list --linked 2>&1 | tee "$RUNNER_TEMP/after.log"
+          missing=0
+          while read -r file; do
+            [ -z "$file" ] && continue
+            version="${file%%_*}"
+            # A row whose Local and Remote columns both show the version.
+            if grep -qE "${version}.*${version}" "$RUNNER_TEMP/after.log"; then
+              echo "Recorded remotely: ${file}"
+            else
+              echo "::error::Not recorded in remote history: ${file}"
+              missing=1
+            fi
+          done <<< "$EXPECTED_MIGRATIONS"
+          exit "$missing"
