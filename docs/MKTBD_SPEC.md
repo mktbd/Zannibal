@@ -111,6 +111,81 @@ Left: mktbd logo → Home. Right: Analysis, Case Studies.
 Extremely lean: mktbd, Analysis, Case Studies, LinkedIn, Copyright. No
 mega-footer.
 
+### As built (Stage 4B)
+Copy and behaviour as implemented in `app/(public)/page.tsx` and
+`components/home/*`; where this differs from the brief above, this wins.
+
+- **Hero** (black): H1 "We Break Down How / Bangladeshi Businesses Grow."
+  with only "Bangladeshi Businesses" highlighted. The highlighted phrase
+  always starts and ends its own line: "We Break Down How / Bangladeshi
+  Businesses / Grow." from 768px; on phones "We Break / Down How /
+  Bangladeshi / Businesses / Grow." (leading 1.05 below lg, 0.95 from lg).
+  The yellow is a band fitted to Figtree's letterforms (`Highlight`), so
+  wrapped lines never paint over each other's descenders; lede "mktbd breaks down the
+  strategies, decisions and market dynamics shaping businesses in
+  Bangladesh."; text link "Explore Analysis →" to `/analysis`. Image slot
+  on the right (44% wide from lg, fading leftwards into black; below lg it
+  sits under the copy, fading upwards). **Hero image pending:** no approved
+  photograph exists. `HERO_IMAGE` (`lib/site.ts`) points at a temporary,
+  replacement-ready placeholder, `public/images/hero-placeholder.jpg`: a
+  procedurally rendered, out-of-focus market street at dusk (not a real
+  photo, not stock, not AI-generated), there only to judge crop, balance,
+  fade and contrast. It is captioned "Placeholder image" and its alt text
+  starts "Placeholder image:". To replace it, add the approved file to
+  `public/images/`, set `HERO_IMAGE = { src, alt }` (no `placeholder`
+  flag) and delete the placeholder; `null` falls back to a plain hatched
+  panel.
+- **Latest Analysis** (off-white): eyebrow "Latest Analysis", heading
+  "Fresh Breakdowns.", "View All →" to `/analysis` in the heading row.
+  - Query (`lib/data/home.ts`, `getLatestAnalyses(3)`): cookie-less
+    anon client (`lib/supabase/public.ts`), so RLS applies exactly as for
+    any visitor and the page can be static; `status = 'published'`
+    (explicit, in addition to RLS -- a signed-in admin never sees drafts
+    here either); ordered `publication_date desc, created_at desc`;
+    limit 3. Slides are embedded ordered by `position asc`, limit 1, so the
+    cover is the lowest-position slide (`lib/analysis-cover.ts`). On query
+    error the section falls back to the empty state (error logged
+    server-side).
+  - Freshness: `revalidate = 300`, plus the CMS's existing
+    `revalidatePath("/")` on every Analysis create/edit/publish/unpublish/
+    delete, so changes appear immediately.
+  - Card: 9:16 frame, the first slide drawn uncropped (`object-contain` on
+    near-black), title over a bottom black gradient; the whole card links
+    to `/analysis/[slug]`. No date, tags or excerpt.
+  - Missing cover: an Analysis with no slides, or whose image fails to
+    load, shows the same frame as a near-black typographic card with its
+    title -- no broken-image icon, no layout change.
+  - Empty state: "New analysis is on the way."
+  - Desktop (lg+): three covers in one row inside the page container,
+    each capped at 22rem (352px) wide so the row doesn't dominate; spare
+    width goes into the gaps, so the outer covers stay flush with the
+    container edges.
+  - Mobile/tablet (below lg): native horizontal scroll with
+    `scroll-snap-type: x mandatory`, full-bleed, one card (~78% wide; 44%
+    from 640px) with the next peeking in. No library, no autoplay, no
+    arrows. The only script (`cover-row.tsx`) brings a keyboard-focused
+    card fully into view, since browsers leave a partly visible card where
+    it is on focus.
+- **Premium Case Studies** (black): eyebrow "Premium Case Studies",
+  headline "Dive Deeper with Our Premium Case Studies." ("Premium"
+  highlighted), copy "Go beyond the carousel with deeper research into the
+  strategies, economics and decisions behind businesses in Bangladesh.",
+  "Explore Case Studies →" to `/case-studies`. No prices, cards or image.
+  Headline left, copy and link right behind a thin divider (stacked below
+  lg).
+- **Co-Build Your Story** (off-white): eyebrow "Work with mktbd" (the brand
+  stays lowercase inside the uppercase label), headline "Have a Story
+  Worth Breaking Down?", copy "If your business is building something
+  worth understanding, we'd like to hear the story behind it." CTA: the
+  text link "Collaborate with us →" to exactly `mailto:collaborate@mktbd.co`
+  (`SITE.contactEmail`, the intended production address; the mailbox
+  need not be live yet). Same layout, padding and spacing as Premium Case
+  Studies, so the two read as equally weighted propositions (same height
+  on desktop; content decides height on mobile).
+- Metadata: title "mktbd — How Bangladeshi Businesses Grow" (absolute),
+  description = the hero lede, matching Open Graph/Twitter title and
+  description. No domain, OG image, favicon or social handle.
+
 ---
 
 ## 4. Analysis (`/analysis`)
@@ -356,6 +431,13 @@ components/
   site/
     primitives.tsx            Container, Eyebrow, SectionHeading, ButtonLink,
                               TextLink, Highlight
+  home/                      Homepage sections (Stage 4B)
+    hero.tsx                  Brand hero + image slot / placeholder
+    latest-analysis.tsx        Latest three published Analyses
+    cover-row.tsx              Client scroller: keyboard focus reveal
+    analysis-cover.tsx         Client cover image with typographic fallback
+    premium-case-studies.tsx   Case Studies introduction
+    co-build.tsx               Co-Build invitation (mailto when email set)
   admin/
     admin-sidebar.tsx         Admin nav: sidebar (lg+), menu disclosure below
     page-header.tsx            Page title + description + contextual actions
@@ -380,6 +462,8 @@ lib/
                               key) — bypasses RLS, must never reach the
                               browser; not yet called from anywhere (no
                               feature in this stage needs it)
+    public.ts                 Cookie-less anon client for public reads
+                              (RLS-scoped; lets public pages stay static)
   auth/
     admin.ts                 requireAdmin() — the authoritative server-side
                               admin-role check (React cache()-deduped per
@@ -393,13 +477,16 @@ lib/
   validation.ts              Server-side field parsers (dates, URLs, BDT…)
   format.ts                  Date, Dhaka date-time and BDT formatting
   site.ts                    Public identity: name, tagline, primary nav,
-                              LinkedIn URL (null until provided)
+                              LinkedIn URL (null until provided), contact
+                              email, HERO_IMAGE (temporary placeholder)
+  analysis-cover.ts          coverSlidePath(): lowest-position slide
   orders.ts                  Order status enum, labels, search columns
   search.ts                  Literal ILIKE helpers (likePattern, ilikeAnyFilter)
   data/
     analysis.ts               getPublishedAnalysisBySlug() — minimal,
                                strongly typed, never exposes drafts
     case-studies.ts            getPublishedCaseStudyBySlug() — same contract
+    home.ts                    getLatestAnalyses() — homepage cards
     admin/
       dashboard.ts             getDashboardCounts() — admin-session counts
       tags.ts                  getTagsWithUsage() — tags + usage counts
@@ -407,6 +494,10 @@ lib/
       content-mutations.ts     Tag-link sync, Storage list/cleanup, slug
                                conflict lookup (session client only)
       orders.ts                listOrders() / getOrder() (snapshots only)
+
+public/
+  images/
+    hero-placeholder.jpg       TEMPORARY hero stand-in (see section 3)
 
 tests/
   unit/                      node:test unit tests for slug/validation/media/
@@ -878,3 +969,56 @@ Still open: public pages and the public purchase flow (later prompts).
 Open: mktbd's LinkedIn URL, a logo/favicon asset, and the production
 domain for `metadataBase` are still to be provided.
 
+### Stage 4B — Public homepage (this task)
+- `/` replaced: Hero, Latest Analysis, Premium Case Studies, Co-Build,
+  inside the unchanged 4A header/footer. Full structure, copy, query and
+  fallback behaviour in section 3, "As built (Stage 4B)".
+- Data: public reads go through the new cookie-less anon client
+  (`lib/supabase/public.ts`), never the service role; drafts are excluded
+  by RLS and by an explicit `status = 'published'` filter. The page is
+  static (ISR, 5 min) and revalidated on demand by the existing CMS
+  actions. No schema, migration or RLS change.
+- `next.config.ts`: `next/image` may load Supabase public Storage objects
+  (`*.supabase.co` plus the configured project URL's host);
+  `dangerouslyAllowLocalIP` is enabled only when that URL is
+  localhost/127.0.0.1 (local Supabase stack), never for a hosted project.
+- `app/globals.css`: the page gutter is now a `--page-gutter` variable
+  (same values as 4A) so the full-bleed scroller can align with the
+  container.
+- Final refinements: a temporary photographic-style hero placeholder
+  (`public/images/hero-placeholder.jpg`, captioned), the Co-Build CTA
+  "Collaborate with us →" to `mailto:collaborate@mktbd.co`, Co-Build
+  aligned to Premium Case Studies' layout and spacing, and desktop cover
+  width capped at 22rem (mobile scroller unchanged).
+- Typography correction: the hero highlight's second line on phones
+  painted over the first line's descenders (an inline background fills
+  the 1.2em font box, taller than the 0.95 display leading). `Highlight`
+  now paints a gradient band from 0.79em above to 0.22em below the
+  baseline, one per wrapped line; the hero breaks before and after the
+  phrase at every width and uses leading 1.05 below lg. Verified at
+  320/375/390/768/1024/1280/1440 for the hero, Latest, Premium and
+  Co-Build headings: no glyph overlap, no band covering another line, no
+  clipping, no overflow (131 checks).
+- Deferred public-site visual TODOs (accepted temporary placeholders at
+  the 04B checkpoint; to be resolved in a later visual-polish stage):
+  1. **Official mktbd logo.** The public header and footer still use the
+     temporary 4A text wordmark ("mktbd" set in Figtree). Replace it with
+     the official logo asset -- needed: a vector SVG with a transparent
+     background, in a white variant (black header/footer) and a black
+     variant -- keeping its natural proportions and accessible text.
+     The Admin CMS wordmark is out of scope.
+  2. **Final hero photograph.** The homepage hero uses the temporary
+     `public/images/hero-placeholder.jpg` (captioned "Placeholder image").
+     Replace it with the approved photograph: add the file to
+     `public/images/`, point `HERO_IMAGE` in `lib/site.ts` at it with real
+     alt text and no `placeholder` flag, and delete the placeholder.
+- Testing: `npm test` (17), lint, typecheck, production build; homepage QA
+  against the local Supabase stack at 375 / 768 / 1024 / 1280 / 1440 with
+  fixtures (4 published Analyses with different dates, a newer draft,
+  multi-slide ordering, an invalid cover, no-slides and empty cases):
+  ordering, draft exclusion, first-slide cover, fallbacks, links,
+  scroll-snap and peek, keyboard focus, one h1, alt text, reduced motion,
+  metadata, CMS unpublish/republish revalidation, console, mailto target,
+  hero placeholder, Premium/Co-Build height parity, desktop-only card cap
+  -- 118 checks;
+  Admin regression 03A (49), 03B (112), 03C (74).

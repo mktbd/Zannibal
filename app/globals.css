@@ -53,13 +53,15 @@
   width: 100%;
   max-width: var(--content-max-width);
   margin-inline: auto;
-  padding-inline: clamp(1rem, 0.6rem + 2vw, 2.5rem);
+  padding-inline: var(--page-gutter);
 }
 
 /* Non-Tailwind-namespaced tokens (layout primitives referenced directly in CSS/JS) */
 :root {
   --content-max-width: 1280px;
   --content-padding-inline: 1.5rem;
+  /* Public side padding; shared by page-container and full-bleed scrollers. */
+  --page-gutter: clamp(1rem, 0.6rem + 2vw, 2.5rem);
 }
 
 body {

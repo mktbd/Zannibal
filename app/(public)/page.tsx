@@ -1,21 +1,33 @@
-import { Container, Eyebrow } from "@/components/site/primitives";
+import type { Metadata } from "next";
+import { getLatestAnalyses } from "@/lib/data/home";
+import { Hero } from "@/components/home/hero";
+import { LatestAnalysis } from "@/components/home/latest-analysis";
+import { PremiumCaseStudies } from "@/components/home/premium-case-studies";
+import { CoBuild } from "@/components/home/co-build";
 
-/**
- * TEMPORARY (Prompt 04A): a neutral page for reviewing the public shell.
- * Replaced by the real Homepage (hero, Latest Analysis, Premium Case
- * Studies, Co-Build Your Story) in Prompt 04B.
- */
-export default function HomePage() {
+const DESCRIPTION =
+  "mktbd breaks down the strategies, decisions and market dynamics shaping businesses in Bangladesh.";
+
+export const metadata: Metadata = {
+  title: { absolute: "mktbd — How Bangladeshi Businesses Grow" },
+  description: DESCRIPTION,
+  openGraph: { title: "mktbd — How Bangladeshi Businesses Grow", description: DESCRIPTION },
+  twitter: { title: "mktbd — How Bangladeshi Businesses Grow", description: DESCRIPTION },
+};
+
+// Statically rendered; refreshed at most every 5 minutes, and immediately
+// when the CMS publishes/edits an Analysis (its actions revalidate "/").
+export const revalidate = 300;
+
+export default async function HomePage() {
+  const analyses = await getLatestAnalyses(3);
+
   return (
-    <Container className="py-20 sm:py-28">
-      <Eyebrow marker className="text-muted">
-        Temporary preview
-      </Eyebrow>
-      <h1 className="mt-5 max-w-[16ch] text-display font-extrabold">Public site foundation</h1>
-      <p className="mt-6 max-w-[56ch] text-lede text-muted">
-        A temporary page for reviewing the shared header, footer and type scale. The homepage replaces it in the
-        next stage.
-      </p>
-    </Container>
+    <>
+      <Hero />
+      <LatestAnalysis analyses={analyses} />
+      <PremiumCaseStudies />
+      <CoBuild />
+    </>
   );
 }

@@ -116,7 +116,22 @@ export function TextLink({
   );
 }
 
-/** Editorial emphasis: yellow marker behind a few important words. */
+/**
+ * Editorial emphasis: yellow marker behind a few important words.
+ *
+ * The marker is a painted band, not the element's background colour: an
+ * inline background fills the whole font box (1.2em for Figtree), which is
+ * taller than the tight display leading, so when the phrase wraps the next
+ * line's yellow paints over the line above's descenders. The band runs
+ * from 0.79em above the baseline (Figtree caps are 0.70em) to 0.22em below
+ * it (descenders reach 0.21em): offset 0.16em from the font box top, whose
+ * baseline sits at 0.95em. Each wrapped line gets its own band (clone), and
+ * with leading >= 1.01 consecutive bands meet without covering any glyph.
+ */
 export function Highlight({ children }: { children: React.ReactNode }) {
-  return <mark className="bg-accent-yellow px-[0.08em] text-black [box-decoration-break:clone]">{children}</mark>;
+  return (
+    <mark className="bg-transparent bg-[linear-gradient(var(--color-accent-yellow),var(--color-accent-yellow))] bg-[length:100%_1.01em] bg-[position:0_0.16em] bg-no-repeat px-[0.08em] text-black [box-decoration-break:clone]">
+      {children}
+    </mark>
+  );
 }
