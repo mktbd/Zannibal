@@ -436,6 +436,126 @@ Product-detail-style content view:
 multiple languages, team purchasing, copyright licensing workflows,
 related-product recommendation engines, PDF previews.
 
+### As built — Stage 4D
+Implemented in `app/(public)/case-studies/*`, `components/case-studies/*`,
+`app/api/case-studies/route.ts`, `lib/case-study-archive.ts` and
+`getCaseStudyIndex()` / `getPublishedCaseStudy()` in
+`lib/data/case-studies.ts`, on the archive building blocks shared with
+Analysis (`components/archive/*`, `lib/archive-core.ts`). Where this
+differs from sections 5 and 6 above, this wins.
+
+- **Role**: a premium research catalogue, not a store -- editorial
+  restraint, typography and hairline rules; no cards, shadows, badges,
+  ratings, carts, author, sales figures or yellow buy buttons.
+- **Archive hero (`/case-studies`)**: compact black masthead like
+  `/analysis`: eyebrow "Case Studies", H1 "Go Deeper Into How / Businesses
+  Grow." (two phrase groups, never a stranded word), lede "Research-led
+  case studies examining the strategies, economics and decisions behind
+  businesses in Bangladesh." No image, price, CTA, stats or testimonials
+  (supersedes the "Deep Dive into Our Case Studies" working copy).
+- **Discovery**: the 04C search + Topics dropdown, unchanged in look and
+  behaviour (`DiscoveryControls`, `TopicMenu`). Search label "Search case
+  studies", placeholder "Title, subject or topic"; case-, accent- and
+  whitespace-insensitive partial matching on title, short description and
+  tag names (every word must match somewhere); `%` and `_` are literal
+  (plain substring matching, no SQL patterns); debounced (250ms), no
+  submit; combines with the topic. Topics = tags attached to at least one
+  published Case Study, "All topics" first, then A-Z.
+- **List** (`ul` of `article` rows, hairline separators -- never a grid):
+  cover left (144px tablet / 176px desktop), then a quiet uppercase topic
+  line (first two topics A-Z, "+N" for more; wraps to two lines at most), the title (H3), the short description (clamped to 3
+  lines, ~62ch), and a meta line: price ("BDT 999", "BDT 1,250.50"),
+  publication month ("September 2026") and "Dive In →". "Dive In" is the
+  row's single link (accessible name "Dive In: <title>") stretched over the
+  whole row, so the entire entry is clickable with one tab stop. Phones
+  (below 640px): a small 72px cover with the topic line beside it (up to
+  three lines), then the title, description and meta line each at the full
+  row width -- long titles are never squeezed into the column beside the
+  cover (the Chattogram fixture: 5 lines at 375px instead of 8). Phone
+  titles use `text-wrap: pretty` (fills the width, no orphans); balanced
+  wrapping from 640px. Tablet/desktop composition unchanged.
+- **Covers**: portrait 3:4 frame (the CMS format), drawn whole
+  (`object-contain`; other shapes sit on a light-grey mat), fixed frame so
+  no layout shift, alt "Cover of “<title>”". Missing or failing covers
+  (no path, dead path, load error) become a near-black editorial panel
+  with a "Case Study" label and the title -- never a broken-image icon.
+- **Progressive loading**: the page renders the first 12 (newest first:
+  `publication_date desc, created_at desc, id`); "Load More Case Studies ↓"
+  with "Showing 12 of 31 case studies" appends the next 12 from
+  `/api/case-studies`; the control disappears once everything is shown;
+  no infinite scroll, no page numbers. Search and topics query the whole
+  published catalogue on the server and restart at the first 12. Same
+  race-safety as Analysis (`useArchiveFeed`): abort + generation counter
+  drop stale responses, Load More ignores repeat clicks while loading,
+  batches are de-duplicated by id and keep server order; when the last
+  batch removes a focused Load More, focus moves to the first new row.
+- **States**: no published Case Studies -> "New case studies are in
+  preparation."; catalogue read failure -> a calm error message; no
+  matches -> "No case studies match “…” in <topic>." + "Clear search and
+  filter"; search/topic request failure -> message + "Try again"; Load
+  More failure -> inline message, button stays.
+- **Product page (`/case-studies/[slug]`)**: "← Case Studies" back link;
+  desktop: cover left (26-28rem column), right: eyebrow "Case Study", H1
+  title (fluid size that steps down for unusually long titles: up to 60
+  characters 30-48px; 61-100 characters 28-40px; over 100 characters
+  26-34px -- normal titles keep the full scale, very long ones stay strong
+  without dominating the column), the short description as descriptor, price, "Buy Case Study"
+  CTA, then metadata (Industry, Pages, Publication Date as "September
+  2026", Format "PDF"; Industry/Pages omitted if ever empty -- nothing
+  invented: no reading time, language or author). Below, aligned with the
+  text column: **Product Description** and **Related Topics**. Phones
+  stack in reading order: cover, Case Study, title, descriptor, price,
+  CTA, metadata, description, related topics. Metadata stays a 2x2 grid
+  (Industry | Pages / Publication Date | Format) at every width, down to
+  320px; labels and values wrap within their cell.
+- **Buy CTA (non-transactional until Stage 4E)**: a visually final black
+  button "Buy Case Study" with no visible "coming soon" copy
+  (`aria-disabled="true"`, stays focusable, `aria-describedby` a visually
+  hidden "Not available yet." so assistive tech announces the state).
+  It has no handler, sits in no form and makes no request: no order, no
+  checkout, no bKash instructions, no navigation. **Stage 4E connects it
+  to the manual bKash purchase flow (section 7).**
+- **Product Description**: stored plain text rendered as React text
+  (never HTML); blank lines separate paragraphs (CRLF normalised), single
+  line breaks are kept; ~65ch measure, 17px / 1.7.
+- **Related Topics**: the Case Study's tags A-Z as plain, non-linked
+  metadata. Decision: the catalogue's topic filter lives in page state
+  with no URL parameter, so there is no clean link target; linking would
+  have meant adding URL-driven filter state to the shared 04C archive.
+  Revisit if the archive ever gains `?topic=`.
+- **Never on the product page**: reviews, ratings, quantity, cart,
+  previews, related products, downloads.
+- **Direct links / 404**: rendered on first request and cached (ISR,
+  `revalidate = 300`; CMS actions already revalidate "/case-studies",
+  "/case-studies/[slug]" and "/"). Unknown, malformed, draft and deleted
+  slugs all get the same public 404 ("This case study isn’t available." +
+  "Browse all case studies →", noindex) -- the query filters
+  `status = 'published'` with the public client, so nothing about a draft
+  is ever read. A database error is an error page, not a false 404.
+- **Metadata**: `/case-studies` -> "Case Studies | mktbd" + the lede.
+  `/case-studies/[slug]` -> "<title> | mktbd", the short description (lede
+  as fallback) and the cover as Open Graph/Twitter image
+  (`summary_large_image`; `summary` without a cover). No canonical,
+  domain or invented OG image; unknown slugs "Case study not found" +
+  noindex.
+- **Data & security**: cookie-less anon client (`createPublicClient`),
+  RLS-governed -- published Case Studies and only the tags attached to
+  them; orders never queried; no service role; explicit
+  `status = 'published'` filters as defence in depth. The catalogue index
+  selects list fields only (no product description, industry or page
+  count); list rows sent to the browser carry no tag ids. The feed API is
+  GET-only, `no-store`, validates `q` (<= 100 chars), `topic` (UUID) and
+  `offset`. No public mutation anywhere.
+- **Performance**: `/case-studies` is static (ISR) with the first batch in
+  the HTML -- no client fetch on load; `getPublishedCaseStudy` is React
+  `cache()`-shared by `generateMetadata` and the page (one read); only
+  the first cover is preloaded, the rest lazy; covers sized per
+  breakpoint; "Dive In" links don't prefetch.
+- **Accessibility**: one H1 per page, logical H2/H3, `role="search"` with
+  a labelled field, the 04C listbox Topics dropdown, live result count,
+  semantic list, visible focus rings, Dive In accessible names, alt text,
+  readable `dl` metadata, touch targets >= 44px, reduced motion honoured.
+
 ---
 
 ## 7. V1 Purchase Model
@@ -546,12 +666,14 @@ app/
       page.tsx                Analysis archive            /analysis
       [slug]/page.tsx          Archive + open viewer       /analysis/[slug]
       [slug]/not-found.tsx     Public 404 for unknown/unpublished slugs
-  api/
-    analysis/route.ts          Archive feed: search/topic/offset -> 18 cards
-    analysis/[slug]/route.ts   One published Analysis's ordered slides
     case-studies/
       page.tsx                Case Studies catalogue      /case-studies
       [slug]/page.tsx          Case Study product page     /case-studies/[slug]
+      [slug]/not-found.tsx     Public 404 for unknown/unpublished slugs
+  api/
+    analysis/route.ts          Archive feed: search/topic/offset -> 18 cards
+    analysis/[slug]/route.ts   One published Analysis's ordered slides
+    case-studies/route.ts      Catalogue feed: search/topic/offset -> 12 rows
   admin/
     login/
       page.tsx                 Login form                  /admin/login
@@ -609,7 +731,21 @@ components/
     analysis-hero.tsx          /analysis masthead + description constant
     analysis-archive.tsx       Client: search, topics, grid, URL-driven viewer
     analysis-viewer.tsx        Client: modal carousel (dialog, scroll-snap)
+  archive/                   Shared by the Analysis and Case Studies
+                              archives (Stage 4D refactor of 04C code)
+    use-archive-feed.ts        Client hook: debounced search, topic, Load
+                                More, race-safe feed state
+    discovery-controls.tsx     Search field + Topics row
     topic-menu.tsx             Client: Topics dropdown (single-select listbox)
+    results-states.tsx         Error / no-results / Load More blocks
+  case-studies/              Public Case Studies (Stage 4D)
+    case-study-hero.tsx        /case-studies masthead + description constant
+    case-study-catalogue.tsx   Client: search, topics, list, Load More
+    case-study-row.tsx         One catalogue row (cover, topics, title,
+                                description, price, date, Dive In)
+    case-study-cover.tsx       Client 3:4 cover with editorial fallback
+    case-study-product.tsx     Product page body (cover, CTA, metadata,
+                                description, related topics)
   admin/
     admin-sidebar.tsx         Admin nav: sidebar (lg+), menu disclosure below
     page-header.tsx            Page title + description + contextual actions
@@ -647,14 +783,20 @@ lib/
   media.ts                   Image type/size rules, Storage path builders
                               and ownership checks, public URLs
   validation.ts              Server-side field parsers (dates, URLs, BDT…)
-  format.ts                  Date, Dhaka date-time and BDT formatting
+  format.ts                  Date, month-year, Dhaka date-time and BDT
+                              formatting
   site.ts                    Public identity: name, tagline, primary nav,
                               LinkedIn URL (null until provided), contact
                               email, HERO_IMAGE (temporary placeholder)
   analysis-cover.ts          coverSlidePath(): lowest-position slide
-  analysis-archive.ts        Pure archive helpers: row mapping, topic list,
-                              search + topic filtering, paging (18), de-dup,
+  archive-core.ts            Shared pure archive helpers: normalisation,
+                              word matching, topic list, paging, de-dup,
                               feed-parameter and slug validation
+  analysis-archive.ts        Analysis archive helpers on archive-core:
+                              row mapping, filtering, paging (18)
+  case-study-archive.ts      Case Study catalogue helpers on archive-core:
+                              row mapping, filtering (title, description,
+                              tags), paging (12), description paragraphs
   orders.ts                  Order status enum, labels, search columns
   search.ts                  Literal ILIKE helpers (likePattern, ilikeAnyFilter)
   data/
@@ -664,7 +806,11 @@ lib/
                                — one Analysis's ordered slides;
                                getPublishedAnalysisBySlug() — minimal,
                                strongly typed, never exposes drafts
-    case-studies.ts            getPublishedCaseStudyBySlug() — same contract
+    case-studies.ts            getCaseStudyIndex() — server-only catalogue
+                               index (list fields + tags);
+                               getPublishedCaseStudy() — one published Case
+                               Study for its product page;
+                               getPublishedCaseStudyBySlug() — same contract
     home.ts                    getLatestAnalyses() — homepage cards
     admin/
       dashboard.ts             getDashboardCounts() — admin-session counts
@@ -1231,3 +1377,48 @@ domain for `metadataBase` are still to be provided.
   (112), 03C (74).
 - Deferred public-site visual TODOs carried over from 4B (unchanged): the
   official mktbd logo and the final homepage hero photograph.
+
+### Stage 4D — Public Case Studies catalogue + product page (this task)
+- `/case-studies` and `/case-studies/[slug]` built; full behaviour in
+  section 6, "As built — Stage 4D".
+- Refactor (no visible change to Analysis): the 04C archive internals were
+  generalised into `components/archive/` (feed hook, search/topics
+  controls, Topics dropdown moved from `components/analysis/`, result
+  states) and `lib/archive-core.ts`; Analysis and Case Studies both build
+  on them. `tsconfig.json` gains `allowImportingTsExtensions` so the pure
+  helper modules can import each other with explicit `.ts` paths that
+  `node:test` resolves (`noEmit` was already set).
+- No schema, migration, RLS, Storage policy or CMS change; no migration 10.
+- The Buy CTA is deliberately non-transactional; Stage 4E connects it to
+  the manual bKash purchase flow.
+- Related Topics are plain metadata, not filter links (see section 6).
+- Empty-catalogue copy: "New case studies are in preparation."
+- Review refinements (04D round 2): phone rows put the title at the full
+  row width below a small cover + topic line; the product H1 steps down
+  fluidly for long titles; the visible "Online ordering opens soon." note
+  was removed (CTA still non-transactional, unavailable state kept for
+  assistive tech); product metadata stays 2x2 down to 320px.
+- Testing: `npm test` (38, incl. 10 new: row mapping, list payload,
+  search on title/description/tags, literal `%`/`_`, topic + search,
+  12/12/7 paging, topic list, description paragraphs, month-year);
+  against the local Supabase stack with 31 published Case Studies + 3
+  drafts (one newer than every published one, one with a draft-only
+  topic), 23 published topics, long titles/descriptions, varied prices
+  and industries, a missing cover, a dead cover path, a 16:9 cover, a
+  date tie and matches beyond the first 12: catalogue + product QA at
+  320/375/390/430/600/768/1024/1280/1440 -- 103 checks (published-only
+  HTML/API, ordering, 12/24/31 batches, Load More removal and focus,
+  double clicks, delayed-response races, search incl. `%`/`_`, topics,
+  combined filters, resets, no results, covers/fallbacks, links, product
+  fields, non-transactional CTA with no request/order, plain-text
+  description, draft/invalid/deleted 404s without leaks, metadata, layout
+  and touch targets, phone-row title width on every row, 2x2 metadata
+  without collision, normal vs long H1 sizes at 320-1440); Analysis 04C archive/viewer (207), paging (52) and
+  Topics (105) suites; homepage 04B (118; its old placeholder-route check
+  now expects the 404) and typography (131); Admin regression 03A (49),
+  03B (112), 03C (74).
+- Deferred public-site visual TODOs carried over (unchanged, not addressed
+  in 4D): the official mktbd logo (temporary text wordmark), the final
+  homepage hero photograph (temporary placeholder), and the footer social
+  links/icons (LinkedIn still renders only once `SITE.linkedinUrl` is set;
+  no icons yet).

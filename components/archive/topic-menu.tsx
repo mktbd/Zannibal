@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
-import type { ArchiveTag } from "@/lib/analysis-archive";
+import type { ArchiveTag } from "@/lib/archive-core";
 
 const ALL = "All topics";
 

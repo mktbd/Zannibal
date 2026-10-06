@@ -33,3 +33,10 @@ export function formatDateTime(iso: string): string {
     timeZone: "Asia/Dhaka",
   }).format(date);
 }
+
+/** "2026-09-12" -> "September 2026" (date-only values; no timezone shifting). */
+export function formatMonthYear(isoDate: string): string {
+  const [y, m] = isoDate.split("-").map(Number);
+  if (!y || !m) return isoDate;
+  return new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(Date.UTC(y, m - 1, 1)));
+}

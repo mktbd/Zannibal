@@ -1,17 +1,26 @@
 /**
  * Pure helpers for the public Analysis archive: shaping published rows into
- * index entries, the topic list, search + topic filtering, paging and feed
- * parameter parsing. No imports at all, so the same code runs on the
- * server, in the browser and in the node:test unit tests.
+ * index entries, search + topic filtering and paging. The generic pieces
+ * (normalisation, matching, paging, de-dup, parameter checks) live in
+ * archive-core.ts and are shared with Case Studies. Framework-free, so the
+ * same code runs on the server, in the browser and in node:test.
  */
+import {
+  appendUnique,
+  collectTags,
+  isValidSlug,
+  matchesQuery,
+  normalizeSearchText,
+  pageOf,
+  parseFeedParams,
+  type ArchiveTag,
+  type FeedPage,
+} from "./archive-core.ts";
+
+export { appendUnique, isValidSlug, normalizeSearchText, parseFeedParams, type ArchiveTag };
 
 /** Number of cards per archive batch (divisible by the 1/2/3-column grids). */
 export const ARCHIVE_PAGE_SIZE = 18;
-
-export interface ArchiveTag {
-  id: string;
-  name: string;
-}
 
 /** What a card needs -- the only per-Analysis data the browser receives in lists. */
 export interface ArchiveCard {
@@ -28,12 +37,7 @@ export interface ArchiveEntry extends ArchiveCard {
 }
 
 /** One batch of archive results, as sent to the browser. */
-export interface ArchivePage {
-  items: ArchiveCard[];
-  /** Matching analyses in the whole archive. */
-  total: number;
-  offset: number;
-}
+export type ArchivePage = FeedPage<ArchiveCard>;
 
 export interface ArchiveRow {
   id: string;
@@ -74,14 +78,7 @@ export function toCard(entry: ArchiveCard): ArchiveCard {
 
 /** Tags used by at least one of the given (published) analyses, A-Z. */
 export function archiveTags(entries: readonly ArchiveEntry[]): ArchiveTag[] {
-  const byId = new Map<string, ArchiveTag>();
-  for (const entry of entries) for (const tag of entry.tags) byId.set(tag.id, tag);
-  return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name, "en"));
-}
-
-/** Lower-cases, strips accents and collapses whitespace. */
-export function normalizeSearchText(value: string): string {
-  return value.normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+  return collectTags(entries);
 }
 
 /**
@@ -91,13 +88,11 @@ export function normalizeSearchText(value: string): string {
  * optional topic (tag id). Order is preserved.
  */
 export function filterAnalyses<T extends ArchiveEntry>(entries: readonly T[], query: string, tagId: string | null): T[] {
-  const words = normalizeSearchText(query).split(" ").filter(Boolean);
-  return entries.filter((entry) => {
-    if (tagId && !entry.tags.some((tag) => tag.id === tagId)) return false;
-    if (words.length === 0) return true;
-    const haystack = [entry.title, ...entry.tags.map((tag) => tag.name)].map(normalizeSearchText);
-    return words.every((word) => haystack.some((text) => text.includes(word)));
-  });
+  return entries.filter(
+    (entry) =>
+      (!tagId || entry.tags.some((tag) => tag.id === tagId)) &&
+      matchesQuery([entry.title, ...entry.tags.map((tag) => tag.name)], query),
+  );
 }
 
 /** Filters the full index and returns one batch of cards (tags stay server-side). */
@@ -106,35 +101,7 @@ export function archivePage(
   { query, tagId, offset }: { query: string; tagId: string | null; offset: number },
   limit = ARCHIVE_PAGE_SIZE,
 ): ArchivePage {
-  const matches = filterAnalyses(entries, query, tagId);
-  return { items: matches.slice(offset, offset + limit).map(toCard), total: matches.length, offset };
-}
-
-/** Appends a batch, dropping anything already shown (keeps first-seen order). */
-export function appendUnique<T extends { id: string }>(current: readonly T[], incoming: readonly T[]): T[] {
-  const seen = new Set(current.map((item) => item.id));
-  return [...current, ...incoming.filter((item) => !seen.has(item.id) && seen.add(item.id))];
-}
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-export const MAX_QUERY_LENGTH = 100;
-const MAX_OFFSET = 100_000;
-
-/** Validates /api/analysis query parameters; anything malformed falls back to a safe default. */
-export function parseFeedParams(params: URLSearchParams): { query: string; tagId: string | null; offset: number } {
-  const query = (params.get("q") ?? "").slice(0, MAX_QUERY_LENGTH);
-  const topic = params.get("topic");
-  const offset = Number.parseInt(params.get("offset") ?? "0", 10);
-  return {
-    query,
-    tagId: topic && UUID.test(topic) ? topic : null,
-    offset: Number.isFinite(offset) && offset > 0 ? Math.min(offset, MAX_OFFSET) : 0,
-  };
-}
-
-/** Same rule as the analyses_slug_format check constraint. */
-export function isValidSlug(slug: string): boolean {
-  return /^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug) && slug.length <= 200;
+  return pageOf(filterAnalyses(entries, query, tagId), offset, limit, toCard);
 }
 
 /** The slug in an /analysis/[slug] path, or null for anything else. */

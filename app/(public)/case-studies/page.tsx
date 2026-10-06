@@ -1,14 +1,30 @@
-export default function CaseStudiesPage() {
+import type { Metadata } from "next";
+import { getCaseStudyIndex } from "@/lib/data/case-studies";
+import { caseStudyPage, caseStudyTopics } from "@/lib/case-study-archive";
+import { CaseStudyHero, CASE_STUDIES_DESCRIPTION } from "@/components/case-studies/case-study-hero";
+import { CaseStudyCatalogue } from "@/components/case-studies/case-study-catalogue";
+
+export const metadata: Metadata = {
+  title: "Case Studies",
+  description: CASE_STUDIES_DESCRIPTION,
+  openGraph: { title: "Case Studies | mktbd", description: CASE_STUDIES_DESCRIPTION },
+  twitter: { title: "Case Studies | mktbd", description: CASE_STUDIES_DESCRIPTION },
+};
+
+// Statically rendered; refreshed at most every 5 minutes, and immediately
+// when the CMS changes a Case Study (its actions revalidate "/case-studies").
+export const revalidate = 300;
+
+export default async function CaseStudiesPage() {
+  const index = await getCaseStudyIndex();
   return (
-    <div className="page-container py-24">
-      <h1 className="text-3xl font-extrabold">
-        Deep Dive into Our Case Studies
-      </h1>
-      <p className="mt-4 max-w-prose text-muted">
-        Case study catalogue placeholder. Search, filter and the product
-        listing will be implemented in a later task per
-        docs/MKTBD_SPEC.md.
-      </p>
-    </div>
+    <>
+      <CaseStudyHero />
+      <CaseStudyCatalogue
+        initialPage={caseStudyPage(index.entries, { query: "", tagId: null, offset: 0 })}
+        tags={caseStudyTopics(index.entries)}
+        loadError={!index.ok}
+      />
+    </>
   );
 }
