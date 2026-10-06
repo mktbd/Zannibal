@@ -19,7 +19,7 @@ function titleSize(title: string): string {
 }
 
 /** Two-column editorial frame shared by the opening section and the sections below it. */
-const columns = "lg:grid lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)] lg:gap-x-16 xl:grid-cols-[minmax(0,28rem)_minmax(0,1fr)] xl:gap-x-24";
+export const productColumns = "lg:grid lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)] lg:gap-x-16 xl:grid-cols-[minmax(0,28rem)_minmax(0,1fr)] xl:gap-x-24";
 
 /**
  * A Case Study's public product page: cover on the left; on the right the
@@ -54,7 +54,7 @@ export function CaseStudyProduct({ caseStudy }: { caseStudy: CaseStudyDetail }) 
           </Link>
         </p>
 
-        <div className={`mt-4 sm:mt-6 ${columns}`}>
+        <div className={`mt-4 sm:mt-6 ${productColumns}`}>
           <div className="w-full max-w-[20rem] sm:max-w-[24rem] lg:max-w-none">
             <CaseStudyCover src={caseStudy.coverUrl} title={caseStudy.title} sizes={COVER_SIZES} preload />
           </div>
@@ -78,21 +78,13 @@ export function CaseStudyProduct({ caseStudy }: { caseStudy: CaseStudyDetail }) 
                 <span className="sr-only">Price: </span>
                 {formatBdt(caseStudy.priceBdt)}
               </p>
-              {/* Purchasing is connected in Stage 4E. Until then the CTA is final
-                  in appearance but does nothing: no handler, no form, no order,
-                  no request. aria-disabled keeps it focusable and announced as
-                  unavailable; the visually hidden note says so in words. */}
-              <button
-                type="button"
-                aria-disabled="true"
-                aria-describedby="buy-case-study-note"
-                className="mt-5 inline-flex min-h-12 w-full cursor-default items-center justify-center rounded-sm bg-black px-8 text-sm font-semibold tracking-[0.12em] text-white uppercase sm:w-auto sm:min-w-64"
+              {/* Opens the manual bKash purchase page for this Case Study. */}
+              <Link
+                href={`/case-studies/${caseStudy.slug}/buy`}
+                className="mt-5 inline-flex min-h-12 w-full items-center justify-center rounded-sm bg-black px-8 text-sm font-semibold tracking-[0.12em] text-white uppercase hover:bg-near-black/85 sm:w-auto sm:min-w-64"
               >
                 Buy Case Study
-              </button>
-              <span id="buy-case-study-note" className="sr-only">
-                Not available yet.
-              </span>
+              </Link>
             </div>
 
             <dl className="mt-8 grid grid-cols-2 gap-x-6 gap-y-5 border-t border-black/15 pt-7 sm:gap-x-10">
@@ -107,7 +99,7 @@ export function CaseStudyProduct({ caseStudy }: { caseStudy: CaseStudyDetail }) 
         </div>
 
         {paragraphs.length ? (
-          <section aria-labelledby="product-description-heading" className={`mt-14 border-t border-black/15 pt-8 sm:mt-20 sm:pt-10 ${columns}`}>
+          <section aria-labelledby="product-description-heading" className={`mt-14 border-t border-black/15 pt-8 sm:mt-20 sm:pt-10 ${productColumns}`}>
             <h2 id="product-description-heading" className="text-xs font-semibold tracking-[0.14em] uppercase">
               Product Description
             </h2>
@@ -120,7 +112,7 @@ export function CaseStudyProduct({ caseStudy }: { caseStudy: CaseStudyDetail }) 
         ) : null}
 
         {caseStudy.tags.length ? (
-          <section aria-labelledby="related-topics-heading" className={`mt-12 border-t border-black/15 pt-8 sm:mt-16 sm:pt-10 ${columns}`}>
+          <section aria-labelledby="related-topics-heading" className={`mt-12 border-t border-black/15 pt-8 sm:mt-16 sm:pt-10 ${productColumns}`}>
             <h2 id="related-topics-heading" className="text-xs font-semibold tracking-[0.14em] uppercase">
               Related Topics
             </h2>

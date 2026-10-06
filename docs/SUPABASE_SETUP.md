@@ -39,6 +39,13 @@ client code fails the build instead of shipping the key to the browser.
 `SUPABASE_PROJECT_ID` is optional and only used locally by `npm run
 gen:types` (section 9) — not read by the running application.
 
+Since Stage 4E the service-role key is **required in production** for Case
+Study purchases: `POST /api/orders` uses it (server-side only) to record
+Pending orders. Without it the purchase form shows a "couldn't be
+submitted" message and no order is created. `BKASH_PAYMENT_NUMBER` (also
+server-only, see `.env.example`) sets the receiving bKash number shown on
+the purchase page; when it is unset, purchasing is paused.
+
 ## 3. Applying migrations
 
 Schema changes live in `supabase/migrations/` as plain, version-controlled
@@ -118,9 +125,10 @@ is in each migration's comments):
 - **Orders have no public INSERT policy at all.** MKTBD_SPEC.md section 9
   asks for a controlled server-side mutation boundary for public order
   submission rather than an open client-side INSERT grant. That boundary
-  (a Route Handler or Server Action using the service-role client, after
-  validation) is in-scope for the prompt that builds the purchase flow —
-  until then, nothing but the service role can write to `orders`.
+  is `POST /api/orders` (Stage 4E): it validates the customer's input,
+  re-reads the published Case Study with the anon client, and only then
+  inserts a Pending order with the service-role client. Nothing but the
+  service role can write to `orders`.
 
 ## 6. Storage configuration
 
@@ -206,9 +214,10 @@ UI code) or is retired in favor of them directly.
   defense-in-depth, not the only gate. A bug in either would still be
   caught by Postgres refusing the query/mutation.
 - The service-role key is never sent to the browser and is only read from
-  `lib/supabase/admin.ts`, which is not yet called from anywhere in the
-  app (no feature in this stage needs to bypass RLS). It exists for a
-  future server-side boundary (e.g. public order submission).
+  `lib/supabase/admin.ts`, which is called from exactly one place:
+  `lib/data/orders.ts`, for the duplicate-transaction lookup and the
+  INSERT of a Pending order behind `POST /api/orders` (Stage 4E). Public
+  reads, Admin reads and every Admin mutation still go through RLS.
 - `public.is_admin()` is `SECURITY DEFINER` so it can read `profiles`
   regardless of the calling role's own row-visibility — this is standard
   Supabase practice for this exact pattern, and the function's one query

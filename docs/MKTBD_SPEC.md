@@ -582,6 +582,165 @@ Study's price later changes or the Case Study is later deleted.
 The purchase workflow itself is not implemented until a dedicated task;
 only foundational schema/type preparation happens early.
 
+### As built — Stage 4E
+Implemented in `app/(public)/case-studies/[slug]/buy/page.tsx`,
+`components/case-studies/purchase-flow.tsx`, `app/api/orders/route.ts`,
+`lib/order-input.ts`, `lib/payment.ts` and `lib/data/orders.ts`, on the
+existing `orders` schema (migration 7) -- no migration, RLS or policy
+change. Where this differs from the text above, this wins; it supersedes
+the 4D note that the Buy CTA is non-transactional.
+
+- **Model**: a manual bKash pilot. No payment gateway, automatic
+  verification, automatic fulfilment, PDF download, email automation,
+  customer account, cart, coupon or invoice. The customer sends money with
+  bKash, submits the payment details and gets an order number; an admin
+  verifies the payment, marks the order Fulfilled or Invalid, and emails
+  the PDF outside the website.
+- **Route**: "Buy Case Study" on `/case-studies/[slug]` is a link to
+  `/case-studies/[slug]/buy` (directly linkable, predictable refresh/back,
+  no modal). The purchase page is rendered per request (`force-dynamic`)
+  so the price and payment number are always current, is `noindex`, and
+  404s exactly like the product page for unknown, draft or deleted slugs.
+- **Purchase page**: "← Case Study" back link; the product (cover, "Case
+  Study", title as H1, trusted price) -- compact above the steps on
+  phones/tablets, a sticky left column on desktop; then **1 Pay with
+  bKash** (four short steps: Send Money, send exactly <price> to the
+  number, keep the Transaction ID, submit below; plus "Never share your
+  bKash PIN or OTP. mktbd will never ask for them") and **2 Submit Your
+  Details** (the form; CTA "Submit Payment Details" / "Submitting…",
+  with "Your payment will be manually verified before the Case Study is
+  sent to your email." beneath it). Editorial: Figtree, monochrome, hairline rules,
+  one yellow marker; no cart summary, quantity, badges, logos or timers.
+- **Payment number**: server-only `BKASH_PAYMENT_NUMBER` (in
+  `.env.example` without a value), validated with the same Bangladesh
+  mobile rule as the form and shown as "01XXX XXXXXX". It is public
+  information on the page, but rendered server-side rather than
+  `NEXT_PUBLIC_`, so it can change without a rebuild and the page and
+  endpoint always agree. Unset/invalid -> the page says "Online ordering
+  is paused at the moment" (no form) and the endpoint answers 503.
+- **Form** (labels always visible, hints, all four required): Full name
+  (`autocomplete=name`), Email (`type=email`), bKash number (`type=tel`),
+  bKash Transaction ID (`autocomplete=off`, no autocorrect). Nothing else
+  -- never PIN, OTP, password, address, NID or card details. Validation
+  (`lib/order-input.ts`, shared by the form and the server): name trimmed,
+  inner whitespace collapsed, at least two letters, <= 120 chars; email a
+  plain `name@domain.tld` shape, <= 254; bKash number accepts
+  `01712345678`, `01712-345678`, `+880 1712 345678`, `8801...` and Bangla
+  digits, normalised to `01XXXXXXXXX` with an 013-019 prefix (not proof
+  of a bKash account); Transaction ID trimmed, letters/digits 6-30,
+  stored as entered (not checked against bKash). Inline errors on blur
+  and submit, associated with fields (`aria-describedby`,
+  `aria-invalid`), focus moves to the first invalid field.
+- **Trust boundary (`POST /api/orders`)**: same-origin JSON only (403 for
+  a foreign `Origin`, 415 for other content types, 413 over 4 KB, 400 for
+  malformed JSON); the body must be exactly `{slug, expectedPriceBdt,
+  customerName, email, bkashNumber, transactionNumber}` -- any other key
+  (status, price, title, order number, ids) is rejected. The server
+  validates the fields, re-reads the Case Study with the anon client (RLS
+  -> published only), and creates the order with the service-role client:
+  `case_study_id`, `case_study_title_snapshot` and `price_bdt_snapshot`
+  from that read, the normalised customer fields, `status = 'pending'`;
+  `order_number` (`MKT-YYYY-NNNNNN`, sequence), `submitted_at` and
+  `updated_at` come from the database. `expectedPriceBdt` is only
+  compared: if the trusted price changed since the page loaded, nothing is
+  created and the customer is told the new price (409), so the amount
+  paid always matches the order. Draft/deleted/unknown -> 404, nothing
+  created (a deletion racing the insert is caught by the foreign key).
+  The response is only `{orderNumber, caseStudyTitle, priceBdt, status}`.
+- **Snapshots**: renaming, repricing, unpublishing or deleting a Case
+  Study never changes an existing order; deletion sets `case_study_id` to
+  NULL (existing `ON DELETE SET NULL`) and the snapshot stays (tested).
+- **Duplicates**: the form ignores repeat submits while a request is in
+  flight; identical requests arriving together share one insert in the
+  server instance; the same Transaction ID on a still-**Pending** order for
+  the same Case Study and email returns that order (a resubmission, e.g.
+  after a network drop), while every other reuse -- a different Case Study
+  or email, or an order already Fulfilled or Invalid -- is rejected on the
+  field with the duplicate-Transaction-ID message, revealing nothing about
+  the existing order (`lib/order-reuse.ts`). Separate purchases with the same email or
+  bKash number are allowed.
+- **Transaction ID review (04E refinement + final correction)**:
+  - *Current rule*: the application treats a bKash Transaction ID as
+    globally unique, compared case-insensitively, across orders of every
+    status (Pending, Fulfilled and Invalid). Reusing it for a different
+    Case Study, a different email or a different customer is rejected;
+    only an exact repeat (same Transaction ID + same Case Study + same
+    email) of an order that is **still Pending** is treated as a
+    resubmission and returns the original order. Once an order is
+    Fulfilled or Invalid, even an exact repeat is rejected (409
+    `{"error":"duplicate_transaction"}` only -- no order number, status,
+    Case Study or customer data).
+  - *Enforcement*: application code only (`lib/data/orders.ts`: lookup,
+    then insert). The database has no unique constraint or index on
+    `bkash_transaction_number` (migration 7).
+  - *Remaining race*: the lookup and the insert are separate steps, so
+    two requests carrying the same Transaction ID that both pass the
+    lookup before either inserts can create two orders. The in-memory
+    guard only merges identical requests (same Case Study, Transaction
+    ID and email) inside one server instance; it does not cover
+    different server instances, or a different email/Case Study with the
+    same Transaction ID even on one instance.
+  - *Is global uniqueness right for V1?* Yes. Each bKash payment has one
+    system-generated Transaction ID, and V1 is one Case Study per order
+    paid with one Send Money of exactly its price, so one Transaction ID
+    should verify at most one order. Accepting the same ID twice would
+    let one payment unlock two orders. Edge cases are handled manually:
+    a customer who paid once for two Case Studies, or whose ID was
+    mistakenly claimed by someone else's submission, contacts mktbd, and
+    the admin resolves it.
+  - **PRE-PRODUCTION HARDENING / LAUNCH BLOCKER (needs an explicitly
+    approved future migration; not created)**: a migration adding a unique index such as
+    `create unique index orders_bkash_transaction_number_key on
+    public.orders (upper(btrim(bkash_transaction_number)));` (production
+    has no orders, so no existing data conflicts), with the endpoint
+    mapping a unique violation (23505) to the same resubmission /
+    duplicate handling.
+  - *Fixed in the final 04E correction*: a repeat that matched an order
+    already Fulfilled or Invalid used to return that order with a
+    "Pending verification" confirmation; it is now rejected like any
+    other reuse.
+- **Confirmation**: replaces the steps in place: "Order Received", "Thank
+  you. Your order details have been received.", order number, Case Study,
+  amount, "Pending verification", and "We've received your order details.
+  Your payment will be manually verified before the Case Study is sent to
+  your email." -- never "payment successful"; no turnaround promise; no
+  email, bKash number or Transaction ID echoed. Focus moves to the heading.
+  There is **no public order lookup**: the confirmation (order number,
+  title, amount only) is kept in this tab's `sessionStorage` for 2 hours,
+  so a reload or Back/Forward shows it again instead of an empty form.
+  Its only exit is "Browse Case Studies →" (no "submit another payment"
+  action); within those 2 hours the same tab shows the confirmation for
+  that Case Study's purchase page, while a new tab shows the form. Other
+  tabs/devices can't see it, and no URL carries order data.
+- **Errors**: field messages never echo input; price changed (reload
+  link), Case Study no longer available (no order, link to Case Studies,
+  contact address), ordering unavailable, server failure ("couldn't be
+  submitted"), network failure ("sending the same details again won't
+  create a second order"). No database, table, SQL or credential details
+  reach the browser; server logs record only error codes, never submitted
+  values.
+- **Admin**: unchanged from Stage 3C -- the Orders queue/detail already
+  show order number, Dhaka timestamp, title/price snapshots, name, email,
+  bKash number, Transaction ID and status, and the only mutation is the
+  admin-only conditional status change (Pending -> Fulfilled/Invalid);
+  no delete. Verified end to end with orders created through the new flow.
+- **Security**: public users cannot list, fetch, update or delete orders
+  or choose status/price/title (RLS has no anon policies on `orders`; the
+  endpoint is POST-only and creates Pending orders only). The service-role
+  key is used only in `lib/data/orders.ts` (server-only), never in client
+  bundles (checked).
+- **Rate limiting**: none in V1. A per-instance in-memory limiter would
+  be weak on serverless hosting and real limiting needs shared state
+  (e.g. Vercel WAF/rate-limit rules or a KV store). **Launch TODO:**
+  configure platform rate limiting for `POST /api/orders`. No CAPTCHA.
+- **Responsive / accessibility**: tested at 320-1440; one H1, h2 steps,
+  ordered instructions read in order, visible labels and hints, 48px
+  inputs and button, live "Submitting..." status, `aria-busy`, focus
+  management, no colour-only errors, reduced motion honoured.
+- **Deferred**: payment gateway, automatic verification, emails
+  (confirmation or fulfilment), PDF delivery, customer accounts, order
+  lookup, refunds, rate limiting (above).
+
 ---
 
 ## 8. Admin / CMS
@@ -670,10 +829,12 @@ app/
       page.tsx                Case Studies catalogue      /case-studies
       [slug]/page.tsx          Case Study product page     /case-studies/[slug]
       [slug]/not-found.tsx     Public 404 for unknown/unpublished slugs
+      [slug]/buy/page.tsx      Manual bKash purchase page  /case-studies/[slug]/buy
   api/
     analysis/route.ts          Archive feed: search/topic/offset -> 18 cards
     analysis/[slug]/route.ts   One published Analysis's ordered slides
     case-studies/route.ts      Catalogue feed: search/topic/offset -> 12 rows
+    orders/route.ts            POST only: record a Pending order (Stage 4E)
   admin/
     login/
       page.tsx                 Login form                  /admin/login
@@ -746,6 +907,8 @@ components/
     case-study-cover.tsx       Client 3:4 cover with editorial fallback
     case-study-product.tsx     Product page body (cover, CTA, metadata,
                                 description, related topics)
+    purchase-flow.tsx          Client: purchase form, submission, errors,
+                                confirmation (Stage 4E)
   admin/
     admin-sidebar.tsx         Admin nav: sidebar (lg+), menu disclosure below
     page-header.tsx            Page title + description + contextual actions
@@ -768,8 +931,8 @@ lib/
                               auth, for Server Components/Actions)
     admin.ts                  Privileged server-only client (service-role
                               key) — bypasses RLS, must never reach the
-                              browser; not yet called from anywhere (no
-                              feature in this stage needs it)
+                              browser; used only by lib/data/orders.ts to
+                              record Pending orders (Stage 4E)
     public.ts                 Cookie-less anon client for public reads
                               (RLS-scoped; lets public pages stay static)
   auth/
@@ -798,6 +961,11 @@ lib/
                               row mapping, filtering (title, description,
                               tags), paging (12), description paragraphs
   orders.ts                  Order status enum, labels, search columns
+  order-input.ts             Purchase form limits, normalisation and
+                              validation (shared by the form and the API)
+  order-reuse.ts             Transaction ID reuse rule (resubmission vs
+                              duplicate), pure + unit-tested
+  payment.ts                 BKASH_PAYMENT_NUMBER (server-only config)
   search.ts                  Literal ILIKE helpers (likePattern, ilikeAnyFilter)
   data/
     analysis.ts               getArchiveIndex() — server-only index of
@@ -812,6 +980,9 @@ lib/
                                Study for its product page;
                                getPublishedCaseStudyBySlug() — same contract
     home.ts                    getLatestAnalyses() — homepage cards
+    orders.ts                  getOrderableCaseStudy() (anon client) and
+                               createPendingOrder() (service role, the only
+                               privileged write) — Stage 4E
     admin/
       dashboard.ts             getDashboardCounts() — admin-session counts
       tags.ts                  getTagsWithUsage() — tags + usage counts
@@ -1422,3 +1593,38 @@ domain for `metadataBase` are still to be provided.
   homepage hero photograph (temporary placeholder), and the footer social
   links/icons (LinkedIn still renders only once `SITE.linkedinUrl` is set;
   no icons yet).
+
+### Stage 4E — Manual Case Study purchase + order flow (this task)
+- `/case-studies/[slug]/buy` and `POST /api/orders` built; the Buy Case
+  Study CTA is live. Full behaviour in section 7, "As built — Stage 4E".
+- No schema, migration, RLS, Storage or Admin change (Admin Orders from
+  3C already covers the lifecycle). First use of the service-role client,
+  narrowly, for order creation.
+- New configuration: `BKASH_PAYMENT_NUMBER` (server-only);
+  `SUPABASE_SERVICE_ROLE_KEY` is now required in production for orders.
+- Final refinement: the confirmation's only exit is "Browse Case
+  Studies →"; the form CTA reads "Submit Payment Details"; the line under
+  it reads "Your payment will be manually verified before the Case Study
+  is sent to your email."; Transaction-ID uniqueness reviewed and
+  documented (section 7) with a database unique index proposed for
+  approval, not created (pre-production hardening / launch blocker).
+- Final logic correction: a Transaction ID resubmission returns the
+  existing order only while that order is Pending (same Case Study and
+  email); a Fulfilled or Invalid order's Transaction ID is always rejected
+  (`lib/order-reuse.ts`, unit-tested).
+- Testing: `npm test` (57, incl. 8 for the purchase input rules and 11
+  for the Transaction ID reuse rule);
+  against the local Supabase stack with the 04D fixtures, a fake payment
+  number and the local service-role key: purchase QA (CTA, page content,
+  validation, normalisation, double submit, confirmation, reload/back,
+  replay, duplicate Transaction ID, price change, unpublish and deletion
+  between load and submit, snapshots after rename/reprice/delete, API
+  hardening, anon RLS on orders, simulated DB failure and missing number,
+  network failure, bundle and log checks, Admin Pending -> Fulfilled /
+  Invalid, the Transaction ID reuse matrix, 9 widths) -- 133 checks; the 04D suite (its CTA checks updated
+  to the live link); 04C, 04B, typography and Admin 03A/03B/03C
+  regressions.
+- Deferred public-site visual TODOs carried over (unchanged): the official
+  mktbd logo, the final homepage hero photograph and the footer social
+  links/icons.
+
