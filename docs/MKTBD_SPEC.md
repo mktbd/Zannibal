@@ -232,6 +232,167 @@ match, updates results in place (no separate results page).
 Uses the shared tag system. An Analysis may have multiple tags. Tags are
 discovery metadata — they don't need to be visible on grid cards.
 
+### As built — Stage 4C
+Implemented in `app/(public)/analysis/*`, `components/analysis/*`,
+`app/api/analysis/*`, `lib/analysis-archive.ts` and `getArchiveIndex()` /
+`getPublishedAnalysisViewer()` in `lib/data/analysis.ts`. Where this differs from the brief above, this wins.
+
+- **Archive (`/analysis`)**: a compact black masthead (eyebrow "Analysis",
+  H1 "How Businesses Grow in Bangladesh.", the positioning lede; no image,
+  no highlight -- deviation from the brief's image hero, per the 04C
+  prompt). The H1 is two phrase groups ("How Businesses" / "Grow in
+  Bangladesh.") so narrow screens never strand a word. Below it, on
+  off-white: search, topics, then the grid.
+- **Grid**: the homepage's cover card (`AnalysisCard`, shared with Latest
+  Analysis): first slide uncropped in a 9:16 frame, title over the dark
+  gradient, whole card a link, no date/tags/excerpt. 1 column below 600px
+  (phones), 2 columns from 600px, 3 from 1024px (each cover capped at
+  22rem like the homepage, uniform gaps, flush with the page container).
+  600px was chosen from rendered comparisons at 430-600px: below it, two
+  columns leave ~190-250px covers whose titles run to 3-4 lines; from 600px
+  (~270px covers) titles sit at about two lines. Titles: 20px with a 20px
+  inset in one column, 18px/16px at 600-767px, 20px from 768px, 22px from
+  1280px; line-height 1.25.
+  Order: `publication_date desc, created_at desc, id`.
+- **Search**: one labelled search field ("Title or topic"), styled as an
+  editorial rule rather than a form box: hairline underline, regular
+  weight, magnifier glyph, held to ~36rem; focus turns the rule solid
+  black and 2px (no box ring). No submit; filters as you type. Case-, accent- and whitespace-insensitive partial
+  matching on title and tag names; every word must match somewhere ("bkash
+  mobile" finds the bKash analysis tagged Mobile Money).
+- **Topics** (`components/analysis/topic-menu.tsx`): one editorial
+  dropdown built to scale with the taxonomy. Closed: the small uppercase
+  "TOPICS" label and a text trigger naming the selection ("All topics ↓",
+  or e.g. "Mobile Money ↓"; long names truncate) -- no box, pill, fill or
+  native `<select>`. Open: a white, square, hairline-bordered panel listing
+  "All topics" first, then every topic used by a published Analysis, A-Z;
+  the current one has a check mark and semibold weight; one column on
+  phones, two from 640px and three from 1024px once the list is long; it
+  scrolls inside itself when tall and, on phones, the page scrolls just
+  enough to show it whole. Selecting closes it and refreshes the results
+  (first batch of 18 of the whole archive); "All topics" clears the
+  filter; no Apply step. ARIA select-only combobox: the trigger has
+  `aria-haspopup="listbox"`/`aria-expanded`; the listbox (labelled
+  "Topics") takes focus and tracks the highlighted option with
+  `aria-activedescendant`; ↑/↓, Home/End, type-ahead, Enter/Space select,
+  Escape (focus back to the trigger), Tab or a click outside close.
+  Combined with search. Tags used only by drafts never appear. No results:
+  "No analyses match “…” in <topic>." plus "Clear search and filter".
+  Search and topics query the **whole published archive** on the server
+  (`/api/analysis`), not just the cards already loaded; typing is
+  debounced (250ms). Search/topic state is in-page only (not in the URL)
+  and survives opening and closing the viewer.
+- **Load More (progressive pagination)**: the page renders the first 18
+  analyses (newest first). Below the grid, "Showing 18 of N analyses" and a
+  text control "Load More Analysis ↓" fetch and append the next 18 of the
+  current results (unfiltered, searched or topic-filtered) in place -- no
+  navigation, no numbered pages, never triggered by scrolling (the footer
+  stays reachable). When everything is shown the control disappears; if it
+  had keyboard focus, focus moves to the first card of the final batch.
+  While loading it reads "Loading…" and ignores further clicks; a failed
+  batch keeps the cards and offers the control again. 18 suits the 1/2/3-
+  column grid (whole rows).
+- **Race safety**: each search/topic request carries a generation number
+  and an AbortController; a newer search, topic or "All" aborts older
+  requests and any response that no longer matches the filters on screen
+  is dropped. Load More is bound to the generation it started in (a topic
+  change mid-load discards the stale batch) and batches are de-duplicated
+  by id, so fast typing, topic switching and repeated clicks can't produce
+  stale, duplicated or reordered cards. A new search keeps the previous
+  cards visible, dimmed, until its results arrive.
+- **Viewer**: a native modal `<dialog>` over the archive (archive kept in
+  place, page scroll locked without layout shift), near-black backdrop.
+  Slides are the original uploads (`next/image` unoptimized) drawn whole
+  with `object-fit: contain` in the space left by the controls; no caption
+  or metadata. Framing: on desktop the slide sits within deliberate margins
+  (80px above, 48px below, side gutters holding the arrows -- ~86% of the
+  viewport height); on phones it spans the width minus the page gutter,
+  with the counter and × aligned to its edges. Top bar: "3 / 8" counter and × close (44px). From 768px,
+  previous/next arrows in the side gutters (never over the artwork),
+  hidden and disabled at the first/last slide -- not infinite. Keys:
+  ←/→ anywhere while open, Escape closes. A click outside the artwork
+  (backdrop or the letterbox beside a contained slide) closes; clicks on
+  the slide or controls don't. Focus moves into the dialog, Tab stays in
+  it, and on close returns to the card that opened it. A missing slide
+  shows "This slide couldn’t be loaded."; an Analysis without slides says
+  it has none. Neighbouring slides load eagerly, the rest lazily.
+- **Mobile**: slides sit in a full-width horizontal CSS scroll-snap track
+  (the gutter is applied inside each slide), so swiping
+  is the browser's own (momentum, one slide per snap); vertical gestures
+  can't change slide (`touch-action: pan-x pinch-zoom`); no arrows below
+  768px; full-width slides below the top bar, respecting safe-area insets
+  and the dynamic viewport height.
+- **URL / history**: a card click calls `history.pushState` to
+  `/analysis/[slug]` (Next syncs `usePathname`; no navigation, fetch or
+  reload) and the viewer follows the path. Close after opening from the
+  archive = `history.back()`, so Back closes and Forward reopens. A
+  direct visit/refresh/shared link renders `/analysis/[slug]` on the
+  server -- the archive's first batch with that viewer open and its slides
+  already loaded (it works for an Analysis far beyond the first batch);
+  closing it `replaceState`s to `/analysis` and focus goes to the results
+  (or to its card if that card is loaded). Ctrl/Cmd/middle-click still opens the
+  slug page in a new tab. Unknown or unpublished slugs: a public 404
+  ("This analysis isn’t available.") inside the site shell; nothing about
+  drafts is rendered or put in metadata.
+- **Data / payload architecture** (all reads with the cookie-less anon
+  client, `lib/supabase/public.ts`: RLS returns only published analyses,
+  their slides and their tags, plus an explicit `status = 'published'`
+  filter; no service role, no client-side Supabase query, no secret in
+  the browser):
+  - *Archive index* (`getArchiveIndex()`, server only): one query for
+    every published Analysis with title, slug, tags and **only its first
+    slide** (`limit 1` on the embedded slides, lowest position). Never sent
+    to the browser as a whole; read fresh per request (no cross-request
+    cache, so search and paging always match the CMS).
+  - *Page payload*: the first 18 cards (id, title, slug, cover URL) plus
+    the topic list. No tags per card, no slide lists, nothing beyond the
+    first batch (≈75 KB HTML with 43 published analyses).
+  - *`GET /api/analysis?q=&topic=&offset=`*: filters the index on the
+    server with the same normalization as before (case/accent/whitespace-
+    insensitive, every word in title or tag names) and returns one batch
+    of cards plus the total match count. Parameters are validated (query
+    capped at 100 chars, topic must be a UUID, offset bounded); responses
+    are `no-store`.
+  - *`GET /api/analysis/[slug]`*: one published Analysis's ordered slide
+    URLs, fetched when its viewer is first opened from the archive and
+    kept for reopening. Slug validated against the slug format before
+    querying; unknown and unpublished are the same 404; a database error
+    is a 503, never a false 404.
+  - Viewer loading is unchanged once slides arrive: current slide and
+    neighbours eager, the rest lazy; covers are resized by next/image.
+    Archive cards don't prefetch their slug routes.
+  - Why search runs in Node rather than SQL: matching accent-insensitively
+    across title *and* tag names in PostgREST would need the `unaccent`
+    extension (a migration); filtering the lightweight index on the server
+    keeps the exact normalization with no schema change. Revisit with a
+    search index if the archive reaches many thousands of analyses.
+- **Rendering / freshness**: `/analysis` is static, `/analysis/[slug]` is
+  ISR on first request (`generateStaticParams` returns `[]`); both
+  revalidate every 5 minutes and immediately through the existing CMS
+  actions (`revalidatePath("/analysis")` and `("/analysis/[slug]",
+  "page")`). Tag renames in the Tags screen don't revalidate public pages
+  (that CMS action only refreshes Admin paths), so they appear within 5
+  minutes.
+- **States**: no published analyses -> "New analysis is on the way." (no
+  search UI); index failure -> "The analysis archive couldn’t be loaded
+  right now…"; search/topic request failure -> "Results couldn’t be loaded
+  right now." + Try again; Load More failure -> inline message, control
+  stays; viewer slide-fetch failure or an Analysis unpublished meanwhile ->
+  a message inside the open viewer; missing/no-slide covers -> the
+  near-black typographic card.
+- **Metadata**: `/analysis` -> "Analysis | mktbd" + the lede as
+  description. `/analysis/[slug]` -> "<title> | mktbd", the same lede as
+  description (the schema has no per-Analysis description), and the first
+  slide as Open Graph/Twitter image (`summary_large_image`; `summary` when
+  there are no slides). No author, dates, canonical or invented domain.
+  Unknown slugs get "Analysis not found" + noindex.
+- **Accessibility**: labelled search, `role="search"`, topic group with
+  `aria-pressed`, live result count, one H1, cards are links (Enter
+  opens), modal dialog labelled with the Analysis title, named controls,
+  slide alt "Slide 3 of 8 — “<title>”", live "Slide n of m", white focus
+  rings in the viewer, reduced motion = no fade and instant slide changes,
+  topic buttons >= 44px.
+
 ---
 
 ## 5. Case Studies (`/case-studies`)
@@ -382,8 +543,12 @@ app/
     layout.tsx              Public shell: SiteHeader + SiteFooter
     page.tsx                 Home                        /
     analysis/
-      page.tsx                Analysis listing            /analysis
-      [slug]/page.tsx          Analysis viewer             /analysis/[slug]
+      page.tsx                Analysis archive            /analysis
+      [slug]/page.tsx          Archive + open viewer       /analysis/[slug]
+      [slug]/not-found.tsx     Public 404 for unknown/unpublished slugs
+  api/
+    analysis/route.ts          Archive feed: search/topic/offset -> 18 cards
+    analysis/[slug]/route.ts   One published Analysis's ordered slides
     case-studies/
       page.tsx                Case Studies catalogue      /case-studies
       [slug]/page.tsx          Case Study product page     /case-studies/[slug]
@@ -435,9 +600,16 @@ components/
     hero.tsx                  Brand hero + image slot / placeholder
     latest-analysis.tsx        Latest three published Analyses
     cover-row.tsx              Client scroller: keyboard focus reveal
-    analysis-cover.tsx         Client cover image with typographic fallback
     premium-case-studies.tsx   Case Studies introduction
     co-build.tsx               Co-Build invitation (mailto when email set)
+  analysis/                  Public Analysis (Stage 4C; card/cover shared
+                              with the homepage)
+    analysis-card.tsx          Cover card (first slide, title, link)
+    analysis-cover.tsx         Client cover image with typographic fallback
+    analysis-hero.tsx          /analysis masthead + description constant
+    analysis-archive.tsx       Client: search, topics, grid, URL-driven viewer
+    analysis-viewer.tsx        Client: modal carousel (dialog, scroll-snap)
+    topic-menu.tsx             Client: Topics dropdown (single-select listbox)
   admin/
     admin-sidebar.tsx         Admin nav: sidebar (lg+), menu disclosure below
     page-header.tsx            Page title + description + contextual actions
@@ -480,10 +652,17 @@ lib/
                               LinkedIn URL (null until provided), contact
                               email, HERO_IMAGE (temporary placeholder)
   analysis-cover.ts          coverSlidePath(): lowest-position slide
+  analysis-archive.ts        Pure archive helpers: row mapping, topic list,
+                              search + topic filtering, paging (18), de-dup,
+                              feed-parameter and slug validation
   orders.ts                  Order status enum, labels, search columns
   search.ts                  Literal ILIKE helpers (likePattern, ilikeAnyFilter)
   data/
-    analysis.ts               getPublishedAnalysisBySlug() — minimal,
+    analysis.ts               getArchiveIndex() — server-only index of
+                               published analyses (card fields, tags, first
+                               slide only); getPublishedAnalysisViewer()
+                               — one Analysis's ordered slides;
+                               getPublishedAnalysisBySlug() — minimal,
                                strongly typed, never exposes drafts
     case-studies.ts            getPublishedCaseStudyBySlug() — same contract
     home.ts                    getLatestAnalyses() — homepage cards
@@ -1022,3 +1201,33 @@ domain for `metadataBase` are still to be provided.
   hero placeholder, Premium/Co-Build height parity, desktop-only card cap
   -- 118 checks;
   Admin regression 03A (49), 03B (112), 03C (74).
+
+### Stage 4C — Public Analysis archive + carousel viewer (this task)
+- `/analysis` and `/analysis/[slug]` built; full behaviour in section 4,
+  "As built — Stage 4C".
+- Refactor: the homepage cover card markup moved into the shared
+  `components/analysis/analysis-card.tsx` (and `analysis-cover.tsx` moved
+  from `components/home/`), rendering identically on the homepage.
+- No schema, migration, RLS, Storage policy or CMS change.
+- Topics: the inline topic row was replaced by a scalable editorial
+  dropdown (single-select listbox), tested with 28 topics incl. long names.
+- Progressive Load More (18 per batch) with server-side search/topics over
+  the whole archive (`/api/analysis`) and on-demand viewer slides
+  (`/api/analysis/[slug]`); the page no longer ships every Analysis or any
+  slide list beyond first-batch covers.
+- Testing: `npm test` (28: index mapping, cover, slide order, topics,
+  search/filter, paging, de-dup, parameter and slug validation, URL
+  parsing); against the local Supabase stack with 43 published analyses +
+  3 drafts (draft-only and late-only topics, a 34-match topic, out-of-order
+  slides, missing/absent covers, a date tie): archive/viewer QA at
+  320/375/390/430/480/600/768/1024/1280/1440 -- 208 checks; paging QA
+  (payload contents, Load More incl. rapid clicks/focus/footer, search
+  and topics beyond the first batch, delayed-response races, failures,
+  direct links far down the list, API hardening) -- 52 checks; Topics
+  dropdown QA with 28 topics at 320-1440 (semantics, keyboard incl.
+  type-ahead, Escape/outside/Tab, long names, containment, search +
+  topic, topic after Load More, zero results) -- 82 checks; homepage
+  04B (118) and typography (131) suites; Admin regression 03A (49), 03B
+  (112), 03C (74).
+- Deferred public-site visual TODOs carried over from 4B (unchanged): the
+  official mktbd logo and the final homepage hero photograph.

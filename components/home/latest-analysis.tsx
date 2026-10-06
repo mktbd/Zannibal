@@ -1,7 +1,6 @@
-import Link from "next/link";
 import { Container, SectionHeading, TextLink } from "@/components/site/primitives";
+import { AnalysisCard } from "@/components/analysis/analysis-card";
 import type { LatestAnalysis as LatestAnalysisItem } from "@/lib/data/home";
-import { AnalysisCover } from "./analysis-cover";
 import { CoverRow } from "./cover-row";
 
 const COVER_SIZES = "(min-width: 1024px) 352px, (min-width: 640px) 44vw, 78vw";
@@ -43,19 +42,7 @@ export function LatestAnalysis({ analyses }: { analyses: LatestAnalysisItem[] })
         >
           {analyses.map((analysis, index) => (
             <li key={analysis.id} className="w-[78%] shrink-0 snap-start sm:w-[44%] lg:w-auto">
-              <Link
-                href={`/analysis/${analysis.slug}`}
-                className="group relative block aspect-[9/16] overflow-hidden bg-near-black"
-              >
-                <AnalysisCover src={analysis.coverUrl} title={analysis.title} sizes={COVER_SIZES} preload={index === 0} />
-                <div
-                  aria-hidden="true"
-                  className="pointer-events-none absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/90 via-black/50 to-transparent"
-                />
-                <h3 className="absolute inset-x-0 bottom-0 p-5 text-xl leading-tight font-bold text-balance text-white group-hover:underline group-hover:decoration-1 group-hover:underline-offset-4 sm:text-2xl">
-                  {analysis.title}
-                </h3>
-              </Link>
+              <AnalysisCard analysis={analysis} sizes={COVER_SIZES} preload={index === 0} />
             </li>
           ))}
         </CoverRow>

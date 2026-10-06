@@ -1,5 +1,9 @@
 import "server-only";
+import { cache } from "react";
 import { createClient } from "@/lib/supabase/server";
+import { createPublicClient } from "@/lib/supabase/public";
+import { mediaPublicUrl } from "@/lib/media";
+import { isValidSlug, orderedSlideUrls, toArchiveEntry, type ArchiveEntry, type ArchiveRow } from "@/lib/analysis-archive";
 import type { Analysis } from "@/lib/types/content";
 
 interface AnalysisRow {
@@ -81,3 +85,72 @@ export async function getPublishedAnalysisBySlug(
 
   return mapAnalysis(data);
 }
+
+export type ArchiveIndexResult = { ok: true; entries: ArchiveEntry[] } | { ok: false; entries: [] };
+
+/**
+ * The server-side archive index: every published Analysis with just what a
+ * card and search need -- title, slug, tags and the first slide (lowest
+ * position; the query embeds only that one slide). Newest publication date
+ * first; created_at, then id, break ties so paging is deterministic.
+ *
+ * Never sent to the browser as a whole: /analysis renders the first batch
+ * from it and /api/analysis serves later batches and search/topic results
+ * filtered from it. Read with the cookie-less anonymous client, so RLS
+ * only returns published analyses, their slides and their tags; the
+ * explicit status filter keeps that true with any client. Not cached
+ * across requests -- always as fresh as the database -- but cache() shares
+ * one read within a request.
+ */
+export const getArchiveIndex = cache(async (): Promise<ArchiveIndexResult> => {
+  const supabase = createPublicClient();
+  const { data, error } = await supabase
+    .from("analyses")
+    .select("id, title, slug, analysis_slides(position, storage_path), analysis_tags(tags(id, name))")
+    .eq("status", "published")
+    .order("publication_date", { ascending: false })
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: true })
+    .order("position", { referencedTable: "analysis_slides", ascending: true })
+    .limit(1, { referencedTable: "analysis_slides" })
+    .overrideTypes<ArchiveRow[], { merge: false }>();
+
+  if (error) {
+    console.error("[analysis] archive index query failed:", error.message);
+    return { ok: false, entries: [] };
+  }
+  return { ok: true, entries: data.map((row) => toArchiveEntry(row, mediaPublicUrl)) };
+});
+
+export interface AnalysisViewerData {
+  id: string;
+  title: string;
+  slug: string;
+  /** Every slide's public URL, in position order. */
+  slides: string[];
+}
+
+/**
+ * One published Analysis with its full ordered slide list, for the viewer
+ * (direct /analysis/[slug] visits, metadata, and /api/analysis/[slug] when
+ * a card is opened in the archive). Null when the slug doesn't exist or
+ * isn't published -- the two are indistinguishable by design. Throws on a
+ * failed read.
+ */
+export const getPublishedAnalysisViewer = cache(async (slug: string): Promise<AnalysisViewerData | null> => {
+  if (!isValidSlug(slug)) return null;
+  const supabase = createPublicClient();
+  const { data, error } = await supabase
+    .from("analyses")
+    .select("id, title, slug, analysis_slides(position, storage_path)")
+    .eq("slug", slug)
+    .eq("status", "published")
+    .order("position", { referencedTable: "analysis_slides", ascending: true })
+    .maybeSingle<Pick<ArchiveRow, "id" | "title" | "slug" | "analysis_slides">>();
+
+  // A failed read is an error, never "not found": a valid shared link must
+  // not 404 because the database was briefly unreachable.
+  if (error) throw new Error(`[analysis] viewer query failed: ${error.message}`);
+  if (!data) return null;
+  return { id: data.id, title: data.title, slug: data.slug, slides: orderedSlideUrls(data.analysis_slides, mediaPublicUrl) };
+});
