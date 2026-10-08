@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type MouseEvent, type UIEvent } from "react";
 
 /**
@@ -12,6 +13,11 @@ export type ViewerContent = {
   state: "ready" | "loading" | "missing" | "error";
   title: string;
   slides: string[];
+  /**
+   * The linked Article ("Read Article"), present only when the server
+   * returned a visible link (toggle on, both published -- enforced by RLS).
+   */
+  article: { slug: string; title: string } | null;
 };
 
 const reducedMotion = () =>
@@ -53,6 +59,7 @@ export function AnalysisViewer({ content, onClose }: { content: ViewerContent; o
           ? "This analysis couldn’t be loaded. Please try again."
           : "This analysis has no slides yet.";
   const slides = content.state === "ready" ? content.slides : [];
+  const readArticle = content.state === "ready" ? content.article : null;
   const total = slides.length;
 
   // Open as a modal; lock the page behind it without shifting the layout.
@@ -150,7 +157,7 @@ export function AnalysisViewer({ content, onClose }: { content: ViewerContent; o
   // including the letterboxed space around a slide drawn with object-contain.
   function onBackdropClick(event: MouseEvent<HTMLElement>) {
     const target = event.target as HTMLElement;
-    if (target.closest("button")) return;
+    if (target.closest("button, a")) return;
     if (target instanceof HTMLImageElement && target.naturalWidth > 0) {
       const box = target.getBoundingClientRect();
       const scale = Math.min(box.width / target.naturalWidth, box.height / target.naturalHeight);
@@ -209,7 +216,13 @@ export function AnalysisViewer({ content, onClose }: { content: ViewerContent; o
           nearly full-bleed (the gutter is applied per slide, so swiping still
           spans the screen); larger screens: deliberate margins all round so
           the slide sits in the viewport rather than filling it. */}
-      <div className="absolute inset-x-0 top-[calc(3.5rem+env(safe-area-inset-top))] bottom-[calc(1.5rem+env(safe-area-inset-bottom))] md:inset-x-24 md:top-[3.75rem] md:bottom-4 lg:inset-x-28">
+      <div
+        className={`absolute inset-x-0 top-[calc(3.5rem+env(safe-area-inset-top))] md:inset-x-24 md:top-[3.75rem] lg:inset-x-28 ${
+          readArticle
+            ? "bottom-[calc(3.5rem+env(safe-area-inset-bottom))] md:bottom-14"
+            : "bottom-[calc(1.5rem+env(safe-area-inset-bottom))] md:bottom-4"
+        }`}
+      >
         {content.state === "loading" ? (
           <p data-slide-message aria-busy="true" className="flex h-full items-center justify-center px-6 text-center text-sm text-white/50">
             Loading…
@@ -259,6 +272,24 @@ export function AnalysisViewer({ content, onClose }: { content: ViewerContent; o
           </div>
         )}
       </div>
+
+      {/* Read Article: a quiet secondary link under the slides, only when
+          the linked Article may be shown. */}
+      {readArticle ? (
+        <div className="absolute inset-x-0 bottom-0 z-10 flex h-[calc(3.5rem+env(safe-area-inset-bottom))] items-start justify-center pt-3 pb-[env(safe-area-inset-bottom)] md:h-14 md:items-center md:pt-0">
+          <Link
+            href={`/articles/${readArticle.slug}`}
+            className="group inline-flex min-h-11 items-center gap-1.5 px-2 text-sm font-medium text-white/60 transition-colors hover:text-white"
+          >
+            <span className="underline decoration-white/30 decoration-1 underline-offset-[0.25em] group-hover:decoration-white">
+              Read Article
+            </span>
+            <span aria-hidden="true" className="inline-block transition-transform group-hover:translate-x-0.5">
+              →
+            </span>
+          </Link>
+        </div>
+      ) : null}
 
       {/* Previous / next: desktop and tablet only; touch uses swipe. */}
       {total > 1 ? (

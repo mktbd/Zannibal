@@ -134,6 +134,9 @@ function revalidateAnalysisViews(id?: string) {
   }
   revalidatePath("/analysis");
   revalidatePath("/analysis/[slug]", "page");
+  // An Article's "See Visual Story" link depends on this Analysis (status,
+  // slug, and the Linked Article toggle).
+  revalidatePath("/articles/[slug]", "page");
   revalidatePath("/");
 }
 

@@ -14,7 +14,7 @@ const COVER_SIZES = "(min-width: 1024px) 352px, (min-width: 600px) 46vw, 92vw";
 /** history.state marker: this entry was pushed by opening a card here. */
 const OPENED_HERE = "mktbdViewer";
 
-type ViewerData = { slug: string; title: string; slides: string[] };
+type ViewerData = { slug: string; title: string; slides: string[]; article: { slug: string; title: string } | null };
 
 /**
  * The /analysis archive: search, topics, cover grid with Load More, and
@@ -80,8 +80,13 @@ export function AnalysisArchive({
   const knownTitle = openSlug ? results.items.find((item) => item.slug === openSlug)?.title : undefined;
   const viewerContent: ViewerContent | null = openSlug
     ? typeof cached === "object"
-      ? { state: "ready", title: cached.title, slides: cached.slides }
-      : { state: cached === "missing" ? "missing" : cached === "error" ? "error" : "loading", title: knownTitle ?? "Analysis", slides: [] }
+      ? { state: "ready", title: cached.title, slides: cached.slides, article: cached.article ?? null }
+      : {
+          state: cached === "missing" ? "missing" : cached === "error" ? "error" : "loading",
+          title: knownTitle ?? "Analysis",
+          slides: [],
+          article: null,
+        }
     : null;
 
   // When the viewer closes (button, Escape, backdrop or Back), return focus

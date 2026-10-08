@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createPublicClient } from "@/lib/supabase/public";
 import { mediaPublicUrl } from "@/lib/media";
 import { isValidSlug, orderedSlideUrls, toArchiveEntry, type ArchiveEntry, type ArchiveRow } from "@/lib/analysis-archive";
+import { visibleLinkTarget } from "@/lib/article-archive";
 import type { Analysis } from "@/lib/types/content";
 
 interface AnalysisRow {
@@ -128,7 +129,16 @@ export interface AnalysisViewerData {
   slug: string;
   /** Every slide's public URL, in position order. */
   slides: string[];
+  /**
+   * "Read Article": the linked Article, only when the link is switched on
+   * and both records are published. RLS returns the link row only then, so
+   * a hidden link (or a draft Article) never leaves the database.
+   */
+  article: { slug: string; title: string } | null;
 }
+
+type ArticleSide = { slug: string; title: string; status: "draft" | "published" };
+type ViewerLinkRow = { read_article_enabled: boolean; articles: ArticleSide | ArticleSide[] | null };
 
 /**
  * One published Analysis with its full ordered slide list, for the viewer
@@ -142,15 +152,32 @@ export const getPublishedAnalysisViewer = cache(async (slug: string): Promise<An
   const supabase = createPublicClient();
   const { data, error } = await supabase
     .from("analyses")
-    .select("id, title, slug, analysis_slides(position, storage_path)")
+    .select(
+      "id, title, slug, status, analysis_slides(position, storage_path), analysis_article_links(read_article_enabled, articles(slug, title, status))",
+    )
     .eq("slug", slug)
     .eq("status", "published")
     .order("position", { referencedTable: "analysis_slides", ascending: true })
-    .maybeSingle<Pick<ArchiveRow, "id" | "title" | "slug" | "analysis_slides">>();
+    .maybeSingle<
+      Pick<ArchiveRow, "id" | "title" | "slug" | "analysis_slides"> & {
+        status: "draft" | "published";
+        analysis_article_links: ViewerLinkRow | ViewerLinkRow[] | null;
+      }
+    >();
 
   // A failed read is an error, never "not found": a valid shared link must
   // not 404 because the database was briefly unreachable.
   if (error) throw new Error(`[analysis] viewer query failed: ${error.message}`);
   if (!data) return null;
-  return { id: data.id, title: data.title, slug: data.slug, slides: orderedSlideUrls(data.analysis_slides, mediaPublicUrl) };
+  const link = Array.isArray(data.analysis_article_links) ? (data.analysis_article_links[0] ?? null) : data.analysis_article_links;
+  return {
+    id: data.id,
+    title: data.title,
+    slug: data.slug,
+    slides: orderedSlideUrls(data.analysis_slides, mediaPublicUrl),
+    article: visibleLinkTarget(link ? { read_article_enabled: link.read_article_enabled, other: link.articles } : null, {
+      kind: "analysis",
+      status: data.status,
+    }),
+  };
 });

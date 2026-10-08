@@ -58,7 +58,7 @@ Authors, Categories, Pricing, Newsletter, etc.) without explicit approval.
 Primary navigation: mktbd logo (→ Home), Analysis, Case Studies. There is
 no separate "Home" nav label.
 
-**Articles (approved in Stage 5A, public pages built in Stage 5C)** are a
+**Articles (approved in Stage 5A, public pages built in Stage 5B)** are a
 third content format but **not** a primary destination: they are linked
 from the **footer only** (never the header), and reached from an Analysis
 via its "Read Article" link. Planned routes: `/articles` (library) and
@@ -880,7 +880,7 @@ snapshotted Price, submission timestamp, Status (Pending/Fulfilled/
 Invalid). Orders contain customer/payment info and must **never** be
 publicly queryable.
 
-### Articles (Stage 5A — database + CMS; public pages in 5C)
+### Articles (Stage 5A — database + CMS; public pages in 5B)
 
 Articles are **free, written business analysis**: the long-form companion
 to a visual Analysis, or a standalone piece. Same lifecycle as the other
@@ -993,28 +993,58 @@ Update · Unpublish, Preview, Delete with confirmation), and
 Article counts; the Tags screen counts Article usage and refuses to delete
 a tag an Article uses.
 
-#### Public Articles — requirements for Stage 5C (not built yet)
+#### Public Articles — as built (Stage 5B)
 
-- **Routes:** `/articles` (library) and `/articles/[slug]` (reading page).
-  Published Articles only; unknown or draft slugs 404.
-- **Navigation:** an "Articles" link in the **footer**, not the header
-  (header stays logo · Analysis · Case Studies).
-- **Library (`/articles`):** a **featured Latest Article** at the top (the
-  newest published Article: large landscape cover, title, short
-  description, date, "Read Article"), then the rest as a card library —
-  **4 columns on desktop, 2 columns on mobile** (tablet in between), each
-  card a **landscape** cover (16:9, cropped `object-cover`; a neutral
-  placeholder when no cover), title, date and tags. Ordered by
-  `publication_date desc, created_at desc`. Same search/topic patterns as
-  the Analysis archive where useful.
-- **Reading page (`/articles/[slug]`):** single readable column (≈ 44rem),
-  title as the only H1, short description as standfirst, date, tags,
-  landscape cover, body via `ArticleBody`. If a published Analysis links to
-  it with the toggle on: a **"See Visual Story →"** CTA to that Analysis.
-- **Analysis viewer:** **"Read Article"** CTA to `/articles/[slug]` when
-  the visibility rule holds. The public Analysis query embeds
-  `analysis_article_links(articles(slug))` then — RLS returns the link only
-  when it may be shown.
+- **Routes:** `/articles` (archive, static + ISR 5 min) and
+  `/articles/[slug]` (reading page, ISR on first request). Published
+  Articles only; unknown, draft and malformed slugs get the public 404
+  ("This article isn’t available."). Reads use the cookie-less anonymous
+  client (`lib/data/articles.ts`), so RLS decides what is visible.
+- **Navigation:** "Articles" in the **footer** (`FOOTER_NAV`); the header
+  is unchanged (logo · Analysis · Case Studies).
+- **Archive:** compact black masthead (same language as /analysis and
+  /case-studies; heading "The Business Behind the Headlines.", description
+  "In-depth analysis of the strategies, decisions and market dynamics
+  shaping businesses in Bangladesh."), then the newest
+  Article **featured** in a wide frame — 16:10 cover on phones/tablets,
+  3:2 beside the text on desktop; eyebrow "Latest Article", headline,
+  optional short description, date and "Read Article →", the whole
+  feature one link, type on paper (no overlay). Below, "More Articles": the
+  rest in a grid of **2 columns on phones, 3 on tablets (≥768px), 4 on
+  desktop (≥1024px)**; each card a **4:3** landscape cover (cropped
+  `object-cover`; a near-black panel with a small "Article" mark when there
+  is no cover), then title and date below the image. The featured Article
+  is never repeated. Order: `publication_date desc, created_at desc, id`.
+  Cards never carry the body. Empty state: "The first articles are being
+  written. Check back soon." No search or topic filter in V1 (the archive
+  is small and the brief asked for none unless justified; tags show on the
+  reading page).
+- **Reading page:** "← Articles" back link, topics (tags), title (the only
+  H1, ~30px on phones up to ~52px), optional standfirst, date, optional
+  16:9 cover (wider than the text column), then the body via
+  `ArticleBody` in a ≈44rem column (17px → 19px type, 1.75 leading).
+  Inline images fit the column at their natural ratio, capped at ~80% of
+  the viewport height and centred; captions smaller and muted. External
+  links open in a new tab (`rel="noopener noreferrer"`) and carry a small
+  ↗ marker plus a screen-reader note; mailto links don't. Then **"See
+  Visual Story →"** (only when the link is switched on and both are
+  published) and "Back to all articles".
+- **Analysis viewer:** **"Read Article →"** — small, muted white-on-black
+  link centred under the slides, only when the server returned a visible
+  link (`getPublishedAnalysisViewer` embeds
+  `analysis_article_links(read_article_enabled, articles(slug, title,
+  status))`; RLS returns the row only when it may be shown). Never on the
+  Analysis archive cards. It disappears as soon as the Article is
+  unpublished or deleted or the toggle is turned off (the viewer API is
+  uncached; the CMS revalidates the ISR pages).
+- **Revalidation:** Article saves/deletes revalidate `/articles`,
+  `/articles/[slug]` and `/analysis/[slug]`; Analysis saves also revalidate
+  `/articles/[slug]` (its "See Visual Story" link).
+- **Metadata:** title, description (short description, else the archive
+  description), Open Graph `article` with published/modified time, tags
+  and the cover. The rest of the SEO/AEO list below (canonical URLs,
+  JSON-LD, sitemap) is not built yet.
+
 - **Canonical / SEO / AEO:** canonical URL `/articles/[slug]` (absolute,
   from the site URL); `<title>` = Article title, meta description = short
   description (fallback: first paragraph, trimmed); Open Graph/Twitter
@@ -1065,6 +1095,10 @@ app/
       [slug]/page.tsx          Case Study product page     /case-studies/[slug]
       [slug]/not-found.tsx     Public 404 for unknown/unpublished slugs
       [slug]/buy/page.tsx      Manual bKash purchase page  /case-studies/[slug]/buy
+    articles/
+      page.tsx                Articles archive            /articles
+      [slug]/page.tsx          Article reading page        /articles/[slug]
+      [slug]/not-found.tsx     Public 404 for unknown/unpublished slugs
   api/
     analysis/route.ts          Archive feed: search/topic/offset -> 18 cards
     analysis/[slug]/route.ts   One published Analysis's ordered slides
@@ -1153,7 +1187,11 @@ components/
                                 confirmation (Stage 4E)
   articles/
     article-body.tsx           Validated Article JSON -> React elements (no
-                                HTML injection); admin preview now, public 5C
+                                HTML injection); admin preview + public page
+    articles-hero.tsx          /articles masthead + description constant
+    featured-article.tsx       Latest Article in the wide featured frame
+    article-card.tsx           Library card: 4:3 cover, title, date
+    article-cover.tsx          Client landscape cover with editorial fallback
   admin/
     admin-sidebar.tsx         Admin nav: sidebar (lg+), menu disclosure below
     page-header.tsx            Page title + description + contextual actions
@@ -1195,6 +1233,8 @@ lib/
   validation.ts              Server-side field parsers (dates, URLs, BDT…)
   article-body.ts            Article body allow-list validator (Tiptap JSON),
                               link/image rules, size limits (Stage 5A)
+  article-archive.ts         Public Articles helpers: cards, featured split,
+                              visible Analysis <-> Article link (Stage 5B)
   article-links.ts           isArticleLinkVisible: Read Article / See Visual
                               Story rule (toggle + linked + both published)
   format.ts                  Date, month-year, Dhaka date-time and BDT
@@ -1916,6 +1956,18 @@ domain for `metadataBase` are still to be provided.
   (path factory + portrait/landscape frame); Case Study behaviour
   unchanged.
 - No public `/articles` pages, no change to the public design, Analysis
-  viewer, Case Studies or order flow (5C requirements recorded in
+  viewer, Case Studies or order flow (public-page requirements recorded in
   section 8).
 - Pre-production hardening items from 4E/4F remain open and unchanged.
+
+### Stage 5B — Public Articles (this task)
+- `/articles` archive (featured Latest Article + 2/3/4-column library),
+  `/articles/[slug]` reading page, footer link, "Read Article →" in the
+  Analysis viewer and "See Visual Story →" on Articles. Details in
+  section 8, "Public Articles — as built (Stage 5B)".
+- No migration, CMS, payment or order changes. The only shared-code
+  changes: the Analysis viewer data now includes the visible linked
+  Article; the body renderer marks external links with ↗; reading
+  typography scales up slightly on wide screens and tall inline images are
+  height-capped.
+- Open: canonical URLs, JSON-LD and a sitemap (SEO pass).

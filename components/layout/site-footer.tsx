@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { Container } from "@/components/site/primitives";
-import { PRIMARY_NAV, SITE, SOCIAL_LINKS } from "@/lib/site";
+import { FOOTER_NAV, SITE, SOCIAL_LINKS } from "@/lib/site";
 
 const footerLink = "inline-flex min-h-11 items-center text-white/70 transition-colors hover:text-white";
 
 /**
- * Lean footer: wordmark, the two destinations, the official social
+ * Lean footer: wordmark, the destinations (Analysis, Case Studies and the
+ * footer-only Articles), the official social
  * channels as plain text links (Facebook · LinkedIn · Instagram, from
  * SOCIAL_LINKS), copyright -- nothing else (spec section 3). Social links
  * open in a new tab and say so to screen readers.
@@ -23,7 +24,7 @@ export function SiteFooter() {
           </Link>
           <nav aria-label="Footer">
             <ul className="flex flex-wrap gap-x-6 gap-y-1 text-sm font-medium">
-              {PRIMARY_NAV.map((item) => (
+              {FOOTER_NAV.map((item) => (
                 <li key={item.href}>
                   <Link href={item.href} className={footerLink}>
                     {item.label}

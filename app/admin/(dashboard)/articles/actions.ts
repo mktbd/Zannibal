@@ -49,8 +49,10 @@ function revalidateArticleViews(id?: string) {
     revalidatePath(`/admin/articles/${id}/edit`);
     revalidatePath(`/admin/articles/${id}/preview`);
   }
-  // A linked Analysis's public "Read Article" link depends on this
-  // Article's status (shown only when both are published).
+  // Public pages: the archive, the reading page, and a linked Analysis's
+  // "Read Article" link (shown only when both are published).
+  revalidatePath("/articles");
+  revalidatePath("/articles/[slug]", "page");
   revalidatePath("/analysis/[slug]", "page");
 }
 

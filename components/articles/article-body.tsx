@@ -77,7 +77,14 @@ function applyMarks(text: string, marks: Mark[], key: number): ReactNode {
           {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
         >
           {out}
-          {external ? <span className="sr-only"> (opens in a new tab)</span> : null}
+          {external ? (
+            <>
+              <span aria-hidden="true" className="article-external">
+                ↗
+              </span>
+              <span className="sr-only"> (opens in a new tab)</span>
+            </>
+          ) : null}
         </a>
       );
     }

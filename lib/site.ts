@@ -50,3 +50,9 @@ export const PRIMARY_NAV = [
   { href: "/analysis", label: "Analysis" },
   { href: "/case-studies", label: "Case Studies" },
 ] as const;
+
+/**
+ * Footer destinations: the primary two plus Articles, which is linked from
+ * the footer only -- never the header (MKTBD_SPEC.md section 2).
+ */
+export const FOOTER_NAV = [...PRIMARY_NAV, { href: "/articles", label: "Articles" }] as const;
