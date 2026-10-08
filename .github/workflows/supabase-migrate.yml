@@ -39,10 +39,11 @@ jobs:
         20261003000007_orders.sql
         20261003000008_storage.sql
         20261004000009_storage_restrict_listing.sql
-      # Migrations 1-8 are already recorded remotely, so the push plan must
+        20261008000010_articles.sql
+      # Migrations 1-9 are already recorded remotely, so the push plan must
       # contain only these.
       PENDING_MIGRATIONS: |
-        20261004000009_storage_restrict_listing.sql
+        20261008000010_articles.sql
     steps:
       - name: Validate mode
         env:
@@ -64,11 +65,11 @@ jobs:
           expected="$(printf '%s' "$EXPECTED_MIGRATIONS" | sed '/^$/d' | LC_ALL=C sort)"
           actual="$(find supabase/migrations -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)"
           if [ "$expected" != "$actual" ]; then
-            echo "::error::supabase/migrations does not contain exactly the 9 expected migration files."
+            echo "::error::supabase/migrations does not contain exactly the 10 expected migration files."
             diff <(echo "$expected") <(echo "$actual") || true
             exit 1
           fi
-          echo "Migration directory matches the expected 9 files."
+          echo "Migration directory matches the expected 10 files."
 
       - name: Set up Supabase CLI
         uses: supabase/setup-cli@1dedf2c611547ede7232d26866dd3c56ab903bbb # v1.7.3
