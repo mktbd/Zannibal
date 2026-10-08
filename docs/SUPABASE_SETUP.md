@@ -63,7 +63,7 @@ commented; read them in order to understand the schema:
 | `20261003000007_orders.sql` | `orders`, order-number generation |
 | `20261003000008_storage.sql` | `editorial-media` bucket + Storage policies |
 | `20261004000009_storage_restrict_listing.sql` | replaces the public `SELECT` policy on `storage.objects` with an admin-only one, so the bucket can't be listed anonymously |
-| `20261008000010_articles.sql` | **PROPOSED (Stage 5A), not deployed.** `articles`, `article_tags`, Article branch of the tag-visibility policy, `analysis_article_links` (one-to-one Analysis ↔ Article link; publicly readable only when switched on and both records are published). Applied to local test stacks only; deliberately not in the migrate workflow's expected list until approved |
+| `20261008000010_articles.sql` | Stage 5A, applied to production 2026-10-08. `articles`, `article_tags`, Article branch of the tag-visibility policy, `analysis_article_links` (one-to-one Analysis ↔ Article link; publicly readable only when switched on and both records are published). The "PROPOSED" note in the file's header comment predates its approval; migration files are not edited after being applied |
 
 **Against a hosted project**, using the [Supabase CLI](https://supabase.com/docs/guides/local-development/cli/getting-started)
 (already a devDependency — run via `npx supabase`):

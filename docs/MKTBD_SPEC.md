@@ -887,8 +887,8 @@ to a visual Analysis, or a standalone piece. Same lifecycle as the other
 content (Draft/Published, Create, Edit, Preview, Publish, Unpublish, Delete
 with confirmation).
 
-**Content model** (`public.articles`, proposed migration
-`20261008000010_articles.sql`):
+**Content model** (`public.articles`, migration
+`20261008000010_articles.sql`, applied to production 2026-10-08):
 
 | Field | Column | Rules |
 |---|---|---|
@@ -1899,13 +1899,15 @@ domain for `metadataBase` are still to be provided.
   SEO pass, performance hardening.
 
 ### Stage 5A — Articles database + CMS (this task)
-- Proposed migration `supabase/migrations/20261008000010_articles.sql`:
+- Migration `supabase/migrations/20261008000010_articles.sql`:
   `articles`, `article_tags`, tag-visibility policy extended to published
   Articles, and `analysis_article_links` (one-to-one Analysis ↔ Article
   link with the Read Article toggle; public rows only when switched on and
-  both published). **Applied to the local test stack
-  only — not to production, and not added to the migrate workflow's
-  expected list, pending review.**
+  both published). **Applied to production on 2026-10-08** through the
+  manual "Supabase migrate" workflow (dry run #7, apply run #8); the
+  workflow now expects migrations 1–10. Post-apply read-only checks
+  confirmed the three tables, RLS, policies and one-to-one constraints,
+  with existing tables and data unchanged.
 - CMS: Articles list/new/edit/preview, rich-text body editor (Tiptap 3,
   pinned), landscape cover + inline images with captions, shared tags,
   Analysis "Linked Article" section, sidebar item, dashboard counts, Tags
