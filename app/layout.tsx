@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Figtree } from "next/font/google";
 import { SITE } from "@/lib/site";
+import { INDEXABLE, SITE_ORIGIN } from "@/lib/seo-config";
 import "./globals.css";
 
 const figtree = Figtree({
@@ -10,6 +11,14 @@ const figtree = Figtree({
 });
 
 export const metadata: Metadata = {
+  // Every relative canonical / Open Graph URL resolves against the
+  // canonical origin (SITE_URL, default https://mktbd.co) -- never the
+  // host a page happened to be requested on.
+  metadataBase: new URL(SITE_ORIGIN),
+  // Non-production deployments (Vercel previews): noindex everywhere.
+  // Pages that set their own robots (admin, 404s, purchase) are noindex
+  // already; public pages set none and inherit this.
+  ...(INDEXABLE ? {} : { robots: { index: false, follow: false } }),
   title: "mktbd",
   description: SITE.tagline,
   applicationName: SITE.name,

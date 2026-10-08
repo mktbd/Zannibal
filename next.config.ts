@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { isIndexableDeployment } from "./lib/seo";
 
 /**
  * Public Storage images (Analysis covers) are served through Next's image
@@ -31,6 +32,23 @@ const nextConfig: NextConfig = {
     // Next 16 refuses to optimize images from private IPs by default (SSRF
     // protection). Allow it only when the configured Supabase is local.
     dangerouslyAllowLocalIP: isLocalSupabase,
+  },
+  /**
+   * Keep private workflows out of search indexes at the HTTP level too (in
+   * addition to robots meta tags), so it also covers non-HTML responses and
+   * redirects. Never a substitute for authorization -- /admin is protected
+   * by requireAdmin() and RLS, the purchase page by its own server logic.
+   */
+  async headers() {
+    const noindex = [{ key: "X-Robots-Tag", value: "noindex, nofollow" }];
+    // Vercel preview/development deployments: every response is noindex.
+    if (!isIndexableDeployment(process.env.VERCEL_ENV)) return [{ source: "/:path*", headers: noindex }];
+    return [
+      { source: "/admin", headers: noindex },
+      { source: "/admin/:path*", headers: noindex },
+      { source: "/api/:path*", headers: noindex },
+      { source: "/case-studies/:slug/buy", headers: noindex },
+    ];
   },
 };
 

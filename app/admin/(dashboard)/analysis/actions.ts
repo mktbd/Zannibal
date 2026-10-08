@@ -123,6 +123,8 @@ async function linkedArticleProblem(
 }
 
 function revalidateAnalysisViews(id?: string) {
+  // Published URLs and their lastmod live in the sitemap.
+  revalidatePath("/sitemap.xml");
   revalidatePath("/admin");
   revalidatePath("/admin/articles");
   revalidatePath("/admin/articles/[id]/edit", "page");

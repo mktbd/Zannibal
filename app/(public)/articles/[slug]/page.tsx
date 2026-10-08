@@ -7,6 +7,9 @@ import { Container } from "@/components/site/primitives";
 import { ARTICLES_DESCRIPTION } from "@/components/articles/articles-hero";
 import { ArticleBody } from "@/components/articles/article-body";
 import { ArticleCover } from "@/components/articles/article-cover";
+import { JsonLd } from "@/components/seo/json-ld";
+import { articleGraph } from "@/lib/seo";
+import { OG_BASE, SITE_INFO } from "@/lib/seo-config";
 
 // Rendered on first request and cached (ISR); the CMS revalidates
 // "/articles/[slug]" whenever an Article (or its linked Analysis) changes,
@@ -25,11 +28,15 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   if (!article) return { title: "Article not found", robots: { index: false } };
   const description = article.shortDescription ?? ARTICLES_DESCRIPTION;
   const images = article.coverUrl ? [{ url: article.coverUrl, alt: `Cover image for “${article.title}”` }] : undefined;
+  const path = `/articles/${article.slug}`;
   return {
     title: article.title,
     description,
+    alternates: { canonical: path },
     openGraph: {
+      ...OG_BASE,
       type: "article",
+      url: path,
       title: `${article.title} | mktbd`,
       description,
       images,
@@ -60,6 +67,18 @@ export default async function ArticlePage({ params }: Props) {
 
   return (
     <article className="bg-off-white pt-8 pb-16 sm:pt-10 sm:pb-20 lg:pb-24">
+      <JsonLd
+        data={articleGraph(SITE_INFO, {
+          title: article.title,
+          slug: article.slug,
+          description: article.shortDescription,
+          coverUrl: article.coverUrl,
+          publicationDate: article.publicationDate,
+          updatedAt: article.updatedAt,
+          tags: article.tags.map((tag) => tag.name),
+          visualStorySlug: article.visualStory?.slug ?? null,
+        })}
+      />
       <Container>
         <nav aria-label="Breadcrumb" className="mx-auto max-w-[44rem] text-sm">
           <Link href="/articles" className="group inline-flex min-h-11 items-center gap-1.5 font-medium text-muted hover:text-black">

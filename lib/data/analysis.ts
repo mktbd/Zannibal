@@ -135,6 +135,10 @@ export interface AnalysisViewerData {
    * a hidden link (or a draft Article) never leaves the database.
    */
   article: { slug: string; title: string } | null;
+  /** For metadata and structured data (all public, published-only fields). */
+  publicationDate: string;
+  updatedAt: string;
+  tags: string[];
 }
 
 type ArticleSide = { slug: string; title: string; status: "draft" | "published" };
@@ -153,7 +157,7 @@ export const getPublishedAnalysisViewer = cache(async (slug: string): Promise<An
   const { data, error } = await supabase
     .from("analyses")
     .select(
-      "id, title, slug, status, analysis_slides(position, storage_path), analysis_article_links(read_article_enabled, articles(slug, title, status))",
+      "id, title, slug, status, publication_date, updated_at, analysis_slides(position, storage_path), analysis_tags(tags(name)), analysis_article_links(read_article_enabled, articles(slug, title, status))",
     )
     .eq("slug", slug)
     .eq("status", "published")
@@ -161,6 +165,9 @@ export const getPublishedAnalysisViewer = cache(async (slug: string): Promise<An
     .maybeSingle<
       Pick<ArchiveRow, "id" | "title" | "slug" | "analysis_slides"> & {
         status: "draft" | "published";
+        publication_date: string;
+        updated_at: string;
+        analysis_tags: { tags: { name: string } | null }[] | null;
         analysis_article_links: ViewerLinkRow | ViewerLinkRow[] | null;
       }
     >();
@@ -179,5 +186,11 @@ export const getPublishedAnalysisViewer = cache(async (slug: string): Promise<An
       kind: "analysis",
       status: data.status,
     }),
+    publicationDate: data.publication_date,
+    updatedAt: data.updated_at,
+    tags: (data.analysis_tags ?? [])
+      .map((link) => link.tags?.name)
+      .filter((name): name is string => !!name)
+      .sort((a, b) => a.localeCompare(b, "en")),
   };
 });

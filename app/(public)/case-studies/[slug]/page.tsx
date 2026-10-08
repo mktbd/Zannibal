@@ -3,6 +3,9 @@ import { notFound } from "next/navigation";
 import { getPublishedCaseStudy } from "@/lib/data/case-studies";
 import { CASE_STUDIES_DESCRIPTION } from "@/components/case-studies/case-study-hero";
 import { CaseStudyProduct } from "@/components/case-studies/case-study-product";
+import { JsonLd } from "@/components/seo/json-ld";
+import { caseStudyGraph } from "@/lib/seo";
+import { OG_BASE, SITE_INFO } from "@/lib/seo-config";
 
 // Rendered on first request and cached (ISR); the CMS revalidates
 // "/case-studies/[slug]" whenever a Case Study changes, so a newly
@@ -20,10 +23,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   if (!caseStudy) return { title: "Case study not found", robots: { index: false } };
   const description = caseStudy.shortDescription ?? CASE_STUDIES_DESCRIPTION;
   const images = caseStudy.coverUrl ? [{ url: caseStudy.coverUrl, alt: `Cover of “${caseStudy.title}”` }] : undefined;
+  const path = `/case-studies/${caseStudy.slug}`;
   return {
     title: caseStudy.title,
     description,
-    openGraph: { title: `${caseStudy.title} | mktbd`, description, images },
+    alternates: { canonical: path },
+    openGraph: { ...OG_BASE, type: "website", title: `${caseStudy.title} | mktbd`, description, url: path, images },
     twitter: {
       card: images ? "summary_large_image" : "summary",
       title: `${caseStudy.title} | mktbd`,
@@ -42,5 +47,20 @@ export default async function CaseStudyPage({ params }: Props) {
   const { slug } = await params;
   const caseStudy = await getPublishedCaseStudy(slug);
   if (!caseStudy) notFound();
-  return <CaseStudyProduct caseStudy={caseStudy} />;
+  return (
+    <>
+      <JsonLd
+        data={caseStudyGraph(SITE_INFO, {
+          title: caseStudy.title,
+          slug: caseStudy.slug,
+          description: caseStudy.shortDescription,
+          coverUrl: caseStudy.coverUrl,
+          priceBdt: caseStudy.priceBdt,
+          publicationDate: caseStudy.publicationDate,
+          tags: caseStudy.tags.map((tag) => tag.name),
+        })}
+      />
+      <CaseStudyProduct caseStudy={caseStudy} />
+    </>
+  );
 }

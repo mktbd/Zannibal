@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { OG_BASE } from "@/lib/seo-config";
 import { getArticleIndex } from "@/lib/data/articles";
 import { splitFeatured } from "@/lib/article-archive";
 import { Container, SectionHeading } from "@/components/site/primitives";
@@ -9,7 +10,8 @@ import { ArticleCard } from "@/components/articles/article-card";
 export const metadata: Metadata = {
   title: "Articles",
   description: ARTICLES_DESCRIPTION,
-  openGraph: { title: "Articles | mktbd", description: ARTICLES_DESCRIPTION },
+  alternates: { canonical: "/articles" },
+  openGraph: { ...OG_BASE, type: "website", title: "Articles | mktbd", description: ARTICLES_DESCRIPTION, url: "/articles" },
   twitter: { title: "Articles | mktbd", description: ARTICLES_DESCRIPTION },
 };
 

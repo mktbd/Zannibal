@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { OG_BASE } from "@/lib/seo-config";
 import { getCaseStudyIndex } from "@/lib/data/case-studies";
 import { caseStudyPage, caseStudyTopics } from "@/lib/case-study-archive";
 import { CaseStudyHero, CASE_STUDIES_DESCRIPTION } from "@/components/case-studies/case-study-hero";
@@ -7,7 +8,8 @@ import { CaseStudyCatalogue } from "@/components/case-studies/case-study-catalog
 export const metadata: Metadata = {
   title: "Case Studies",
   description: CASE_STUDIES_DESCRIPTION,
-  openGraph: { title: "Case Studies | mktbd", description: CASE_STUDIES_DESCRIPTION },
+  alternates: { canonical: "/case-studies" },
+  openGraph: { ...OG_BASE, type: "website", title: "Case Studies | mktbd", description: CASE_STUDIES_DESCRIPTION, url: "/case-studies" },
   twitter: { title: "Case Studies | mktbd", description: CASE_STUDIES_DESCRIPTION },
 };
 

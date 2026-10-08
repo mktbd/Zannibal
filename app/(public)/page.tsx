@@ -4,6 +4,9 @@ import { Hero } from "@/components/home/hero";
 import { LatestAnalysis } from "@/components/home/latest-analysis";
 import { PremiumCaseStudies } from "@/components/home/premium-case-studies";
 import { CoBuild } from "@/components/home/co-build";
+import { JsonLd } from "@/components/seo/json-ld";
+import { homeGraph } from "@/lib/seo";
+import { OG_BASE, SITE_INFO } from "@/lib/seo-config";
 
 const DESCRIPTION =
   "mktbd breaks down the strategies, decisions and market dynamics shaping businesses in Bangladesh.";
@@ -11,7 +14,8 @@ const DESCRIPTION =
 export const metadata: Metadata = {
   title: { absolute: "mktbd — How Bangladeshi Businesses Grow" },
   description: DESCRIPTION,
-  openGraph: { title: "mktbd — How Bangladeshi Businesses Grow", description: DESCRIPTION },
+  alternates: { canonical: "/" },
+  openGraph: { ...OG_BASE, type: "website", title: "mktbd — How Bangladeshi Businesses Grow", description: DESCRIPTION, url: "/" },
   twitter: { title: "mktbd — How Bangladeshi Businesses Grow", description: DESCRIPTION },
 };
 
@@ -24,6 +28,7 @@ export default async function HomePage() {
 
   return (
     <>
+      <JsonLd data={homeGraph(SITE_INFO)} />
       <Hero />
       <LatestAnalysis analyses={analyses} />
       <PremiumCaseStudies />

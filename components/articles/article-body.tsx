@@ -49,7 +49,8 @@ function renderBlock(node: BlockNode, key: number): ReactNode {
       return (
         <figure key={key}>
           {/* eslint-disable-next-line @next/next/no-img-element -- editorial image at its natural ratio; sizes are unknown */}
-          <img src={mediaPublicUrl(node.attrs.path)} alt={node.attrs.alt} loading="lazy" decoding="async" />
+          {/* Alt text from the editor; when left empty, the caption describes the image instead. */}
+          <img src={mediaPublicUrl(node.attrs.path)} alt={node.attrs.alt || node.attrs.caption} loading="lazy" decoding="async" />
           {node.attrs.caption ? <figcaption>{node.attrs.caption}</figcaption> : null}
         </figure>
       );

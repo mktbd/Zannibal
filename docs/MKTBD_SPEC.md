@@ -1042,24 +1042,14 @@ a tag an Article uses.
   `/articles/[slug]` (its "See Visual Story" link).
 - **Metadata:** title, description (short description, else the archive
   description), Open Graph `article` with published/modified time, tags
-  and the cover. The rest of the SEO/AEO list below (canonical URLs,
-  JSON-LD, sitemap) is not built yet.
+  and the cover. Canonical URLs, JSON-LD and the sitemap were added in
+  Stage 5C — see section 9, "SEO and AI-search discoverability".
 
-- **Canonical / SEO / AEO:** canonical URL `/articles/[slug]` (absolute,
-  from the site URL); `<title>` = Article title, meta description = short
-  description (fallback: first paragraph, trimmed); Open Graph/Twitter
-  `article` cards with the landscape cover; JSON-LD `Article`/
-  `NewsArticle` (headline, description, image, `datePublished`,
-  `dateModified` = `updated_at`, author/publisher = mktbd, `mainEntityOfPage`,
-  `keywords` from tags) and `BreadcrumbList`; when linked, cross-reference
-  the Analysis (e.g. `isRelatedTo`/`relatedLink`). Semantic structure for
-  answer engines: one H1, H2/H3 hierarchy from the editor, `<article>`,
-  `<time datetime>`, figures with `figcaption`, citations as real outbound
-  links. Include published Articles in the sitemap with `lastmod`; ISR
-  with revalidation on publish/unpublish/update (the CMS already
-  revalidates `/analysis/[slug]`; add `/articles` and `/articles/[slug]`).
-  The Analysis and its Article are distinct pages (carousel vs text), so
-  each is canonical to itself — no duplicate-content canonicalisation.
+- **Canonical / SEO / AEO:** built in Stage 5C as specified here, with
+  two refinements: the Article JSON-LD is `Article` (analysis, not news,
+  so not `NewsArticle`), and the Analysis cross-reference uses `relatedLink`
+  on the page node. Full description in section 9, "SEO and AI-search
+  discoverability".
 
 ---
 
@@ -1360,6 +1350,126 @@ project during setup / are easy to get wrong from memory:
   default) and `images.imageSizes` all changed defaults in v16 — check the
   bundled upgrade guide before tuning `next.config.ts` image behavior for
   Supabase Storage-served images.
+
+### SEO and AI-search discoverability (Stage 5C)
+
+**Configuration.** `SITE_URL` (server-only, optional): the canonical
+origin, default `https://mktbd.co`. It must be an absolute `https` origin
+with no path or query (`http://localhost` is accepted for local testing);
+anything else falls back to the default with a `[seo]` warning
+(`lib/seo.ts` `parseSiteUrl`, `lib/seo-config.ts`). It is the root
+`metadataBase`, so every canonical tag, `og:url`, JSON-LD id and sitemap URL
+uses the production domain regardless of the host that served the page.
+
+**Deployment indexing.** `VERCEL_ENV` (set by Vercel at build and run time)
+decides (`isIndexableDeployment`): `production` is indexable; `preview` and
+`development` are not, enforced three ways — `robots.txt` disallows
+everything (no sitemap line), every page inherits `<meta name="robots"
+content="noindex, nofollow">` from the root layout, and every response
+(sitemap included) gets `X-Robots-Tag: noindex, nofollow`. Canonicals
+still point at `https://mktbd.co`. With no `VERCEL_ENV` (local builds,
+other hosts) the site is indexable — another host needs its own preview
+protection.
+
+**Canonical URLs.** Self-referencing `alternates.canonical` on `/`,
+`/analysis`, `/analysis/[slug]`, `/articles`, `/articles/[slug]`,
+`/case-studies` and `/case-studies/[slug]`: the clean path only, so query
+strings (utm, fbclid) never appear, and Next.js redirects trailing-slash
+variants to the canonical form. An Article and its Analysis are separate
+formats and each is canonical to itself. Unknown, draft and malformed
+slugs return 404 with `noindex` and no canonical or JSON-LD, so nothing
+unpublished ever points at, or leaks into, a published URL. Canonical tags
+are not access control.
+
+**Metadata and social previews.** Every public page: title, description,
+canonical, Open Graph (`og:url`, `og:site_name`, `og:locale` = `en_BD`, a
+shared `OG_BASE` because Next.js replaces rather than merges a parent's
+`openGraph`), Twitter card.
+- Article: short description (fallback: the approved archive
+  description), `og:type` article with `article:published_time`
+  (publication date), `article:modified_time` (`updated_at`) and
+  `article:tag`; cover image when present, else a `summary` card with no
+  image.
+- Analysis (no description field): the approved Analysis description,
+  prefixed with its stored topics when it has any ("A visual analysis from
+  mktbd on Fintech and Mobile Money. …"); first slide as the image;
+  `og:type` website.
+- Case Study: its short description (fallback: the approved description),
+  cover image, `og:type` website.
+- No generated images service: existing covers and slides only.
+
+**Structured data** (`lib/seo.ts` builders, `components/seo/json-ld.tsx`;
+server-rendered `application/ld+json`, with `<` escaped so CMS text can't
+end the script):
+- Home: `Organization` (mktbd, url, `sameAs` = the official social
+  profiles; no logo until the final asset exists) and `WebSite`.
+- Article: `WebPage` + `Article` (headline, description, cover image,
+  `datePublished` = publication date, `dateModified` = `updated_at`,
+  `keywords` = tags, `isAccessibleForFree: true`, author **and** publisher
+  = the mktbd Organization, as no author is stored in the CMS) +
+  `BreadcrumbList`; `relatedLink` to the Analysis only when "See Visual
+  Story" is shown.
+- Analysis: `ImageGallery` (the slides) — deliberately not an Article —
+  with dates, topics, publisher, `isAccessibleForFree: true`,
+  `BreadcrumbList`, and `relatedLink` to the Article only when "Read
+  Article" is shown.
+- Case Study: `WebPage` + `Product` (name, short description, cover,
+  `category` "Case Study (PDF)", brand mktbd, `releaseDate`) with an `Offer`
+  of exactly `price` (the published row's `price_bdt`, the same value the
+  page shows, e.g. "BDT 1,500" ↔ `"1500.00"`), `priceCurrency` BDT, `url`
+  (the product page) and seller mktbd — nothing else. Why Product/Offer: the
+  page sells a downloadable report at a fixed price; an Offer states only
+  that. It is never marked free, and it claims no availability/stock,
+  delivery time or automated fulfilment (purchase is a manual bKash payment
+  verified by hand and delivered by email), and no rating or review;
+  nothing from the paid PDF or orders.
+- Never invented: authors, staff, reviewers, ratings, reviews, prices,
+  dates, credentials. The JSON-LD repeats only what the page shows.
+
+**Sitemap** (`app/sitemap.ts`, `lib/sitemap-entries.ts`,
+`lib/data/sitemap.ts`): `/sitemap.xml` lists the homepage, the three
+archives and every published Analysis, Article and Case Study (slug,
+`updated_at` and one image each; three lean queries through the anonymous
+client, so RLS excludes drafts). `lastmod` is only a stored timestamp:
+each detail URL's own `updated_at`. The homepage and the archives get none
+— no stored value records when an archive page changed (an edit to an
+older item, an unpublish or a delete wouldn't show in its newest item's
+`updated_at`), so no derived date is published. Never listed: drafts, `/admin`, previews, purchase
+pages, APIs, error pages. ISR every 5 minutes and revalidated by every CMS
+save, unpublish and delete, so unpublished or deleted content drops out at
+once. One file holds 50,000 URLs; switch to `generateSitemaps()` well
+before that.
+
+**Robots and indexing exclusions.** `app/robots.ts`: every user agent —
+AI crawlers included (mktbd wants to be found and cited) — may crawl the
+public site, its images (Supabase Storage) and `/_next` assets;
+`Disallow: /admin` and `/api/`; `Sitemap:` line. Purchase pages are not
+disallowed so crawlers can read their noindex. Noindex is enforced by
+`<meta name="robots">` (all `/admin` pages via `app/admin/layout.tsx`,
+the Article preview, purchase pages, 404s) **and** `X-Robots-Tag: noindex,
+nofollow` headers (`next.config.ts`) on `/admin`, `/api` and
+`/case-studies/*/buy`. None of this is access control: `/admin` is
+protected by `requireAdmin()` + RLS.
+
+**AI-search discoverability principles.** Standards only: complete
+server-rendered HTML (the full Article body, semantic `h1` → `h2`/`h3`,
+`<article>`, `<time datetime>`, `<figure>`/`<figcaption>`, real outbound
+source links), accurate dates, clear publisher attribution, descriptive
+alt text (an inline image without alt text falls back to its caption),
+and ordinary crawlable `<a>` links for "Read Article →" and "See Visual
+Story →" (present in the server HTML only when the link is visible). No
+hidden AI-only text, fabricated FAQs or keyword stuffing. **llms.txt is not
+implemented:** no major search or answer engine documents using it, and
+everything it would say is already in the sitemap and the pages.
+
+**Remaining SEO limitations.** No `Organization.logo` (FINAL MKTBD LOGO
+ASSET REQUIRED); no Twitter/X handle (`twitter:site`); no author bylines
+(no author field in the CMS); Analysis descriptions are generic beyond the
+topics prefix (no description field); OG images are the original uploads
+(no 1200×630 crops); Google Search Console / Bing Webmaster verification
+and sitemap submission happen at launch; Product rich results may want
+`availability`, which is not stated because purchase availability depends
+on the manual bKash setup (deliberately not stated).
 
 ---
 
@@ -1970,4 +2080,14 @@ domain for `metadataBase` are still to be provided.
   Article; the body renderer marks external links with ↗; reading
   typography scales up slightly on wide screens and tall inline images are
   height-capped.
-- Open: canonical URLs, JSON-LD and a sitemap (SEO pass).
+- Canonical URLs, JSON-LD and the sitemap followed in Stage 5C.
+
+### Stage 5C — Technical SEO & AI-search optimisation (this task)
+- Canonical origin `SITE_URL` (default `https://mktbd.co`), self-referencing
+  canonicals and `og:url` on every public page, shared Open Graph base,
+  topic-derived Analysis descriptions, JSON-LD for home, Articles, Analysis
+  and Case Studies, `/sitemap.xml`, `/robots.txt`, noindex for `/admin`
+  (layout) plus `X-Robots-Tag` on `/admin`, `/api` and purchase pages,
+  caption fallback for empty inline-image alt text. Details in section 9,
+  "SEO and AI-search discoverability".
+- No migration, layout, typography or content-architecture change.

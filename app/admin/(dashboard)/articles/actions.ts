@@ -40,6 +40,8 @@ function parseIntent(formData: FormData): Intent {
 }
 
 function revalidateArticleViews(id?: string) {
+  // Published URLs and their lastmod live in the sitemap.
+  revalidatePath("/sitemap.xml");
   revalidatePath("/admin");
   revalidatePath("/admin/tags");
   revalidatePath("/admin/articles");

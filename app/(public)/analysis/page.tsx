@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { OG_BASE } from "@/lib/seo-config";
 import { getArchiveIndex } from "@/lib/data/analysis";
 import { archivePage, archiveTags } from "@/lib/analysis-archive";
 import { AnalysisHero, ANALYSIS_DESCRIPTION } from "@/components/analysis/analysis-hero";
@@ -7,7 +8,8 @@ import { AnalysisArchive } from "@/components/analysis/analysis-archive";
 export const metadata: Metadata = {
   title: "Analysis",
   description: ANALYSIS_DESCRIPTION,
-  openGraph: { title: "Analysis | mktbd", description: ANALYSIS_DESCRIPTION },
+  alternates: { canonical: "/analysis" },
+  openGraph: { ...OG_BASE, type: "website", title: "Analysis | mktbd", description: ANALYSIS_DESCRIPTION, url: "/analysis" },
   twitter: { title: "Analysis | mktbd", description: ANALYSIS_DESCRIPTION },
 };
 
