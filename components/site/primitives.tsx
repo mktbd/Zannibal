@@ -88,7 +88,9 @@ export function ButtonLink({
 /**
  * Inline editorial link: underlined, with the underline thickening on hover.
  * `arrow` appends a small → that nudges right on hover (motion is disabled
- * under prefers-reduced-motion by the .site base styles).
+ * under prefers-reduced-motion by the .site base styles). The underline sits
+ * on the text only: in a flex link it would otherwise also run under the
+ * arrow (the same treatment as "Dive In →" and "Browse Case Studies →").
  */
 export function TextLink({
   href,
@@ -103,10 +105,10 @@ export function TextLink({
   return (
     <Link
       href={href}
-      className={`group inline-flex items-baseline gap-1.5 font-medium underline decoration-1 underline-offset-[0.2em] hover:decoration-2 ${className}`}
+      className={`group inline-flex items-baseline gap-1.5 font-medium ${className}`}
       {...rest}
     >
-      {children}
+      <span className="underline decoration-1 underline-offset-[0.2em] group-hover:decoration-2">{children}</span>
       {arrow ? (
         <span aria-hidden="true" className="inline-block transition-transform group-hover:translate-x-0.5">
           →

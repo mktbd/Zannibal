@@ -9,7 +9,7 @@ import { SiteNav } from "./site-nav";
  * the black editorial heroes of Home / Analysis / Case Studies. Not sticky:
  * pages are reading-first and there are only two destinations.
  */
-export function SiteHeader() {
+export function SiteHeader({ markCurrent = true }: { markCurrent?: boolean }) {
   return (
     <header className="on-dark bg-black text-white">
       <Container className="flex min-h-16 items-center justify-between gap-4">
@@ -20,7 +20,7 @@ export function SiteHeader() {
           {SITE.name}
           <span className="sr-only"> — home</span>
         </Link>
-        <SiteNav />
+        <SiteNav markCurrent={markCurrent} />
       </Container>
     </header>
   );

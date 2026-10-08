@@ -109,7 +109,9 @@ Left: mktbd logo → Home. Right: Analysis, Case Studies.
 
 ### Footer
 Extremely lean: mktbd, Analysis, Case Studies, LinkedIn, Copyright. No
-mega-footer.
+mega-footer. *(As built from Stage 4F: wordmark + Analysis / Case Studies,
+then the official Facebook · LinkedIn · Instagram text links beside the
+copyright -- see "As built — Stage 4F" below.)*
 
 ### As built (Stage 4B)
 Copy and behaviour as implemented in `app/(public)/page.tsx` and
@@ -187,6 +189,75 @@ Copy and behaviour as implemented in `app/(public)/page.tsx` and
   description. No domain, OG image, favicon or social handle.
 
 ---
+
+### As built — Stage 4F (public site completion)
+A conservative completion pass over the whole public site at
+320/375/430/768/1024/1280/1440. The approved 04B–04E page layouts were
+audited and kept; only global/shared pieces changed.
+
+- **Audit result**: no horizontal overflow on any public route at any
+  tested width (only the intended horizontal scrollers -- the homepage
+  Latest Analysis row and the Analysis viewer track -- extend past the
+  viewport); one H1 per page; header 64px everywhere; content edges align
+  with the header on every page; Analysis routes keep "Analysis" current,
+  Case Study detail and purchase routes keep "Case Studies" current.
+- **Footer**: wordmark + Analysis / Case Studies, then the official social
+  channels as restrained text links -- Facebook · LinkedIn · Instagram --
+  beside the copyright (stacked above it on phones). URLs live in
+  `SOCIAL_LINKS` in `lib/site.ts`; they open in a new tab with
+  `rel="noopener noreferrer"` and an sr-only "(opens in a new tab)". No
+  other platforms, no icons, no raw URLs. (`SITE.linkedinUrl` is replaced
+  by `SOCIAL_LINKS`.)
+- **Site-wide 404** (`app/not-found.tsx`): unmatched URLs previously got
+  Next's unstyled default page with no header or footer; they now get the
+  public frame with "Page not found" / "This page isn't available." and
+  links to Analysis and Case Studies (noindex). Unknown Analysis / Case
+  Study slugs keep their own section 404s. Admin `notFound()` cases (e.g.
+  an unknown order id) also show this page instead of Next's default; the
+  Admin layout itself is unchanged.
+- **Public error state** (`app/(public)/error.tsx`): a page whose data
+  can't be loaded (e.g. the database is unreachable) previously showed
+  Next's default error screen; it now shows "Something went wrong" / "This
+  page couldn't be loaded." with Try again and a link home, inside the
+  public header/footer -- never a false "not found", never error details.
+- **Short pages**: `<main>` now carries the off-white page ground
+  (`components/layout/public-shell.tsx`), so 404s and other short pages no
+  longer show a white band between the content and the footer.
+- **Links**: the shared `TextLink` (Explore Analysis →, View All →,
+  Browse … →, Collaborate with us →) now underlines its text only, not the
+  arrow -- the treatment "Dive In →" and "Browse Case Studies →" already had.
+- **Kept as is (checked)**: header (text wordmark, two links, yellow
+  current-page underline, white focus rings), homepage structure and
+  mobile Latest Analysis swipe row, Premium intro banner, Co-Build CTA,
+  Analysis grid/viewer, Case Studies list/product page, purchase layouts,
+  section 404s, empty/no-results/load-failure states.
+- **Final 4F refinements**:
+  - *Mobile hero*: the copy block's bottom padding is 24px on phones (40px
+    on tablets; desktop unchanged) and the image's upward fade is short
+    (black -> 10% by 35% of its height), so the image starts right under
+    "Explore Analysis" instead of after a band of black. Headline, copy
+    and stacking order unchanged.
+  - *Latest Analysis on phones*: each card is the row width minus 4rem (at
+    most 21rem), so a constant ~64px of the next cover shows at 320-430
+    (previously 78%, i.e. 63-89px) -- the swipe cue, still with no arrows,
+    dots or library; 9:16 covers, native scroll and snap unchanged.
+  - *Analysis viewer (md+)*: the slide area runs from 60px (just below the
+    56px counter/close bar) to 16px above the bottom -- a 9:16 slide is
+    824px tall at 900px viewport height (was 772px). Slides stay
+    `object-contain` (checked with 9:16, 4:5 and 1:1 fixtures); phones keep
+    their approved insets.
+  - *Site-wide 404*: marks no navigation section current (an unmatched URL
+    like `/case-studies/x/y` belongs to no section); the section 404s
+    (`/analysis/[slug]`, `/case-studies/[slug]`) keep their section.
+- **Pre-launch brand/content TODOs** (accepted; not blocking):
+  1. **FINAL MKTBD LOGO ASSET REQUIRED** -- the header/footer keep the
+     temporary text wordmark. The supplied logo files were fully opaque
+     (a checkerboard painted into the image, not transparency) and were not
+     modified or used. Once a genuine transparent PNG/SVG is supplied this
+     is a small asset swap in `site-header.tsx` / `site-footer.tsx`.
+  2. **FINAL HOMEPAGE HERO IMAGE REQUIRED** -- the hero keeps the temporary
+     `public/images/hero-placeholder.jpg`; no layout problems were found
+     around it at the tested widths.
 
 ## 4. Analysis (`/analysis`)
 
@@ -818,8 +889,10 @@ publicly queryable.
 app/
   layout.tsx              Root layout: html/body, Figtree font
   globals.css              Design tokens (Tailwind v4 @theme) + base styles
+  not-found.tsx            Site-wide 404 for unmatched URLs (public frame)
   (public)/                Route group for the public site (no URL segment)
-    layout.tsx              Public shell: SiteHeader + SiteFooter
+    layout.tsx              Public shell (PublicShell: header, main, footer)
+    error.tsx               Public error state (data couldn't be loaded)
     page.tsx                 Home                        /
     analysis/
       page.tsx                Analysis archive            /analysis
@@ -875,7 +948,9 @@ components/
   layout/
     site-header.tsx          Public header: text wordmark + primary nav (black)
     site-nav.tsx              Client nav with current-page marker
-    site-footer.tsx           Lean public footer (black)
+    site-footer.tsx           Lean public footer (black): wordmark, nav,
+                              Facebook · LinkedIn · Instagram, copyright
+    public-shell.tsx          Skip link + header + <main> + footer frame
   site/
     primitives.tsx            Container, Eyebrow, SectionHeading, ButtonLink,
                               TextLink, Highlight
@@ -949,8 +1024,8 @@ lib/
   format.ts                  Date, month-year, Dhaka date-time and BDT
                               formatting
   site.ts                    Public identity: name, tagline, primary nav,
-                              LinkedIn URL (null until provided), contact
-                              email, HERO_IMAGE (temporary placeholder)
+                              official SOCIAL_LINKS, contact email,
+                              HERO_IMAGE (temporary placeholder)
   analysis-cover.ts          coverSlidePath(): lowest-position slide
   archive-core.ts            Shared pure archive helpers: normalisation,
                               word matching, topic list, paging, de-dup,
@@ -1627,4 +1702,22 @@ domain for `metadataBase` are still to be provided.
 - Deferred public-site visual TODOs carried over (unchanged): the official
   mktbd logo, the final homepage hero photograph and the footer social
   links/icons.
+
+### Stage 4F — Public site completion & global polish (this task)
+- Full public-site audit at 320/375/430/768/1024/1280/1440 (home,
+  Analysis archive and viewer, Case Studies archive, product pages incl.
+  the long-title fixture, purchase page, confirmation, all 404s). Findings
+  and changes in section 3, "As built — Stage 4F".
+- Changed: footer social links (`SOCIAL_LINKS`), site-wide 404, public
+  error state, off-white `<main>` ground via `PublicShell`, `TextLink`
+  underline on text only. No change to Analysis, Case Studies or purchase
+  behaviour, the CMS, the database, RLS, Storage or migrations.
+- Social URLs (official, supplied by mktbd): Facebook, LinkedIn,
+  Instagram. The social-links TODO is resolved.
+- Remaining pre-launch brand/content TODOs: FINAL MKTBD LOGO ASSET
+  REQUIRED; FINAL HOMEPAGE HERO IMAGE REQUIRED.
+- Pre-production hardening still open (unchanged, not addressed in 4F):
+  database-level Transaction ID uniqueness (launch blocker), platform rate
+  limiting for `POST /api/orders`, production environment variables, full
+  SEO pass, performance hardening.
 

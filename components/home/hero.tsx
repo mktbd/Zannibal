@@ -28,8 +28,11 @@ function HeroVisual() {
           </span>
         </div>
       )}
-      {/* Fade into the black copy side. */}
-      <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-b from-black via-black/10 to-transparent lg:bg-gradient-to-r lg:from-black lg:via-black/35 lg:to-transparent" />
+      {/* Fade into the black copy side. On phones/tablets the upward fade is
+          short (black -> 10% by 35% of the height), so the image reads as
+          part of the hero right under "Explore Analysis" rather than
+          starting after a band of black. */}
+      <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-b from-black via-black/10 via-35% to-transparent lg:bg-gradient-to-r lg:from-black lg:via-black/35 lg:via-50% lg:to-transparent" />
       {HERO_IMAGE?.placeholder ? (
         <span aria-hidden="true" className="absolute right-4 bottom-4 text-[11px] font-medium uppercase tracking-[0.14em] text-white/45">
           Placeholder image
@@ -42,7 +45,7 @@ function HeroVisual() {
 export function Hero() {
   return (
     <section aria-labelledby="hero-heading" className="on-dark relative overflow-hidden bg-black text-white">
-      <Container className="relative z-10 pt-14 pb-12 sm:pt-20 sm:pb-16 lg:pt-28 lg:pb-32">
+      <Container className="relative z-10 pt-14 pb-6 sm:pt-20 sm:pb-10 lg:pt-28 lg:pb-32">
         <div className="lg:max-w-[62%]">
           {/* The highlighted phrase always starts and ends its own line:
               "We Break Down How" / "Bangladeshi Businesses" / "Grow." from

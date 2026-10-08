@@ -6,12 +6,6 @@ export const SITE = {
   name: "mktbd",
   tagline: "mktbd breaks down how businesses grow in Bangladesh.",
   /**
-   * mktbd's LinkedIn page. Not yet provided -- deliberately null rather
-   * than a guessed URL. The footer shows the LinkedIn link only once this
-   * is set (e.g. "https://www.linkedin.com/company/<handle>/").
-   */
-  linkedinUrl: null as string | null,
-  /**
    * Public contact address for "Co-Build Your Story" (homepage mailto).
    * The intended production address; the homepage hides the link if this
    * is ever set back to null.
@@ -39,6 +33,17 @@ export const HERO_IMAGE: { src: string; alt: string; placeholder?: boolean } | n
   alt: "Placeholder image: an out-of-focus market street at dusk, with lit stalls and passers-by",
   placeholder: true,
 };
+
+/**
+ * mktbd's official social channels (confirmed by mktbd; Stage 4F), shown as
+ * text links in the footer. Add a platform here only once its official URL
+ * is provided -- never a guessed one.
+ */
+export const SOCIAL_LINKS = [
+  { label: "Facebook", href: "https://www.facebook.com/profile.php?id=61589364071130" },
+  { label: "LinkedIn", href: "https://www.linkedin.com/company/mktbd/" },
+  { label: "Instagram", href: "https://www.instagram.com/mktbd_?stkn=Mzl2NHZxZ3A5bTVz" },
+] as const;
 
 /** The only two primary public destinations (no "Home" item; the wordmark links home). */
 export const PRIMARY_NAV = [

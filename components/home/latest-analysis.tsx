@@ -10,7 +10,10 @@ const COVER_SIZES = "(min-width: 1024px) 352px, (min-width: 640px) 44vw, 78vw";
  * 9:16 frame with the title over a dark gradient.
  *
  * Layout: below lg a native horizontal scroller (scroll-snap, one card in
- * view with the next peeking in, full-bleed to the screen edges); from lg a
+ * view with the next peeking in, full-bleed to the screen edges). On phones
+ * each card is the row width minus 4rem (at most 21rem), so the same strip
+ * of the next cover shows at every phone width -- the swipe cue, without
+ * arrows or dots; from 640px two cards share the row. From lg a
  * three-column row inside the page container, each cover capped at 22rem
  * wide so the row doesn't dominate the page; any spare width goes into the
  * gaps, keeping the outer covers flush with the container. No carousel library;
@@ -41,7 +44,7 @@ export function LatestAnalysis({ analyses }: { analyses: LatestAnalysisItem[] })
           className="mt-8 flex snap-x snap-mandatory gap-4 overflow-x-auto scroll-px-[var(--page-gutter)] px-[var(--page-gutter)] pb-2 [scrollbar-width:none] sm:gap-5 lg:page-container lg:mt-10 lg:grid lg:snap-none lg:grid-cols-[repeat(3,minmax(0,22rem))] lg:justify-between lg:gap-6 lg:overflow-visible lg:pb-0 [&::-webkit-scrollbar]:hidden"
         >
           {analyses.map((analysis, index) => (
-            <li key={analysis.id} className="w-[78%] shrink-0 snap-start sm:w-[44%] lg:w-auto">
+            <li key={analysis.id} className="w-[min(calc(100%-4rem),21rem)] shrink-0 snap-start sm:w-[44%] lg:w-auto">
               <AnalysisCard analysis={analysis} sizes={COVER_SIZES} preload={index === 0} />
             </li>
           ))}

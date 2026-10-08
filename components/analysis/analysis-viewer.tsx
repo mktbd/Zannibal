@@ -209,7 +209,7 @@ export function AnalysisViewer({ content, onClose }: { content: ViewerContent; o
           nearly full-bleed (the gutter is applied per slide, so swiping still
           spans the screen); larger screens: deliberate margins all round so
           the slide sits in the viewport rather than filling it. */}
-      <div className="absolute inset-x-0 top-[calc(3.5rem+env(safe-area-inset-top))] bottom-[calc(1.5rem+env(safe-area-inset-bottom))] md:inset-x-24 md:top-[4.5rem] md:bottom-10 lg:inset-x-28 lg:top-20 lg:bottom-12">
+      <div className="absolute inset-x-0 top-[calc(3.5rem+env(safe-area-inset-top))] bottom-[calc(1.5rem+env(safe-area-inset-bottom))] md:inset-x-24 md:top-[3.75rem] md:bottom-4 lg:inset-x-28">
         {content.state === "loading" ? (
           <p data-slide-message aria-busy="true" className="flex h-full items-center justify-center px-6 text-center text-sm text-white/50">
             Loading…
