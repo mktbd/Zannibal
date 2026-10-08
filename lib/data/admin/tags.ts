@@ -6,6 +6,7 @@ export interface TagWithUsage {
   name: string;
   normalizedName: string;
   analysisCount: number;
+  articleCount: number;
   caseStudyCount: number;
   totalCount: number;
 }
@@ -15,13 +16,14 @@ interface TagUsageRow {
   name: string;
   normalized_name: string;
   analysis_tags: { count: number }[];
+  article_tags: { count: number }[];
   case_study_tags: { count: number }[];
 }
 
 /**
  * Every tag, alphabetically (case-insensitive, via normalized_name), with
- * how many Analysis and Case Study entries reference it. Uses PostgREST
- * embedded counts over the two join tables in a single query, under the
+ * how many Analysis, Article and Case Study entries reference it. Uses
+ * PostgREST embedded counts over the three join tables in a single query, under the
  * signed-in admin's session -- the counts include drafts because RLS lets
  * an admin see every join row.
  */
@@ -31,7 +33,7 @@ export async function getTagsWithUsage(): Promise<TagWithUsage[]> {
   const { data, error } = await supabase
     .from("tags")
     .select(
-      "id, name, normalized_name, analysis_tags(count), case_study_tags(count)",
+      "id, name, normalized_name, analysis_tags(count), article_tags(count), case_study_tags(count)",
     )
     .order("normalized_name", { ascending: true })
     .overrideTypes<TagUsageRow[], { merge: false }>();
@@ -42,14 +44,16 @@ export async function getTagsWithUsage(): Promise<TagWithUsage[]> {
 
   return data.map((row) => {
     const analysisCount = row.analysis_tags[0]?.count ?? 0;
+    const articleCount = row.article_tags[0]?.count ?? 0;
     const caseStudyCount = row.case_study_tags[0]?.count ?? 0;
     return {
       id: row.id,
       name: row.name,
       normalizedName: row.normalized_name,
       analysisCount,
+      articleCount,
       caseStudyCount,
-      totalCount: analysisCount + caseStudyCount,
+      totalCount: analysisCount + articleCount + caseStudyCount,
     };
   });
 }

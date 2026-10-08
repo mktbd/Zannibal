@@ -133,7 +133,7 @@ export function TagRow({ tag }: { tag: TagWithUsage }) {
         )}
         {/* Narrow screens hide the per-type columns; show the split here. */}
         <span className="mt-0.5 block text-xs font-normal text-muted sm:hidden">
-          Analysis {tag.analysisCount} · Case Studies {tag.caseStudyCount}
+          Analysis {tag.analysisCount} · Articles {tag.articleCount} · Case Studies {tag.caseStudyCount}
         </span>
         <p
           id={feedbackId}
@@ -144,6 +144,7 @@ export function TagRow({ tag }: { tag: TagWithUsage }) {
         </p>
       </th>
       <td className="hidden px-4 py-3 text-right tabular-nums sm:table-cell">{tag.analysisCount}</td>
+      <td className="hidden px-4 py-3 text-right tabular-nums sm:table-cell">{tag.articleCount}</td>
       <td className="hidden px-4 py-3 text-right tabular-nums sm:table-cell">{tag.caseStudyCount}</td>
       <td className="px-4 py-3 text-right font-semibold tabular-nums">{tag.totalCount}</td>
       <td className="px-4 py-3">

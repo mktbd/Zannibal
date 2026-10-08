@@ -8,6 +8,8 @@ import { TagSelector, type TagOption } from "@/components/admin/tag-selector";
 import { EditorActionBar, FormError, useAutoSlug, useUnsavedChangesWarning } from "@/components/admin/editor-parts";
 import { initialEditorState } from "@/components/admin/editor-state";
 import { linkButton, textInput } from "@/components/admin/ui";
+import type { ArticleOption } from "@/lib/data/admin/content";
+import { isArticleLinkVisible } from "@/lib/article-links";
 import { saveAnalysis } from "./actions";
 import { SlideManager } from "./slide-manager";
 
@@ -20,9 +22,19 @@ export interface AnalysisEditorValues {
   status: ContentStatus;
   tagIds: string[];
   slides: { id: string; storagePath: string }[];
+  linkedArticleId: string | null;
+  readArticleEnabled: boolean;
 }
 
-export function AnalysisEditor({ values, allTags }: { values: AnalysisEditorValues; allTags: TagOption[] }) {
+export function AnalysisEditor({
+  values,
+  allTags,
+  articleOptions,
+}: {
+  values: AnalysisEditorValues;
+  allTags: TagOption[];
+  articleOptions: ArticleOption[];
+}) {
   const mode = values.id ? "edit" : "create";
   const [state, formAction, pending] = useActionState(saveAnalysis, initialEditorState);
   const errors = state.status === "error" ? state.fieldErrors : {};
@@ -169,6 +181,15 @@ export function AnalysisEditor({ values, allTags }: { values: AnalysisEditorValu
         </div>
       </section>
 
+      <LinkedArticleSection
+        analysisId={values.id}
+        analysisStatus={values.status}
+        initialArticleId={values.linkedArticleId}
+        initialEnabled={values.readArticleEnabled}
+        options={articleOptions}
+        error={errors.linkedArticle}
+      />
+
       <EditorActionBar
         mode={mode}
         status={values.status}
@@ -179,5 +200,102 @@ export function AnalysisEditor({ values, allTags }: { values: AnalysisEditorValu
         dirty={dirty}
       />
     </form>
+  );
+}
+
+/**
+ * "Read Article": links this Analysis to its written Article (one-to-one;
+ * the link is stored only here, on the Analysis). Turning the toggle off
+ * keeps the chosen Article -- it is submitted from a hidden field -- but
+ * hides the public links. The public "Read Article" / "See Visual Story"
+ * links appear only when the toggle is on and both records are published.
+ */
+function LinkedArticleSection({
+  analysisId,
+  analysisStatus,
+  initialArticleId,
+  initialEnabled,
+  options,
+  error,
+}: {
+  analysisId: string | null;
+  analysisStatus: ContentStatus;
+  initialArticleId: string | null;
+  initialEnabled: boolean;
+  options: ArticleOption[];
+  error?: string;
+}) {
+  const [enabled, setEnabled] = useState(initialEnabled);
+  const [articleId, setArticleId] = useState(initialArticleId ?? "");
+  const selected = options.find((option) => option.id === articleId) ?? null;
+  const visible = isArticleLinkVisible({
+    readArticleEnabled: enabled,
+    linkedArticleId: selected?.id ?? null,
+    analysisStatus,
+    articleStatus: selected?.status ?? null,
+  });
+
+  let note: string;
+  if (!enabled) note = selected ? `Off. “${selected.title}” stays linked but no public link is shown.` : "Off. No public link is shown.";
+  else if (!selected) note = "Choose the Article to link.";
+  else if (visible) note = "Both are published: the public Read Article link is shown.";
+  else note = "The public link appears once both this Analysis and the Article are published.";
+
+  return (
+    <section aria-labelledby="linked-article-heading" className="mt-6 border border-light-grey bg-white p-5">
+      <div className="flex items-baseline justify-between">
+        <h2 id="linked-article-heading" className="text-sm font-semibold">
+          Linked Article
+        </h2>
+        <span className="text-xs text-muted">Optional</span>
+      </div>
+      <div className="mt-3 flex flex-col gap-4 text-sm">
+        <label className="flex w-fit items-center gap-2 font-medium">
+          <input
+            type="checkbox"
+            name="readArticleEnabled"
+            checked={enabled}
+            onChange={(event) => setEnabled(event.target.checked)}
+            aria-describedby="linkedArticle-message"
+            className="size-4 accent-black"
+          />
+          Read Article
+        </label>
+
+        {enabled ? (
+          <FormField id="linkedArticle" label="Article" error={error} hint="Drafts can be selected.">
+            <select
+              {...fieldA11y("linkedArticle", error)}
+              name="linkedArticleId"
+              value={articleId}
+              onChange={(event) => setArticleId(event.target.value)}
+              className={`${textInput} sm:max-w-md`}
+            >
+              <option value="">Choose an Article…</option>
+              {options.map((option) => {
+                const takenElsewhere = option.linkedAnalysisId !== null && option.linkedAnalysisId !== analysisId;
+                return (
+                  <option key={option.id} value={option.id} disabled={takenElsewhere}>
+                    {option.title}
+                    {option.status === "draft" ? " (draft)" : ""}
+                    {takenElsewhere ? ` — linked to “${option.linkedAnalysisTitle}”` : ""}
+                  </option>
+                );
+              })}
+            </select>
+          </FormField>
+        ) : (
+          <>
+            <input type="hidden" name="linkedArticleId" value={articleId} />
+            {error ? <p className="text-sm text-red-700">{error}</p> : null}
+          </>
+        )}
+
+        <p id={enabled ? undefined : "linkedArticle-message"} className="text-muted" aria-live="polite">
+          {note}
+          {options.length === 0 ? " No Articles exist yet." : ""}
+        </p>
+      </div>
+    </section>
   );
 }

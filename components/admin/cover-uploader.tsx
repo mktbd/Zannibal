@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { isMediaType, MEDIA_ACCEPT, mediaPublicUrl, newCaseStudyCoverPath, validateImageFile } from "@/lib/media";
+import { isMediaType, MEDIA_ACCEPT, mediaPublicUrl, validateImageFile, type MediaType } from "@/lib/media";
 import { discardUnsavedMedia, uploadMedia } from "@/components/admin/upload";
 import { buttonSecondary, linkButton } from "@/components/admin/ui";
 
@@ -13,19 +13,25 @@ interface CoverState {
 }
 
 /**
- * Single cover image for a Case Study. Uploads go straight to Storage
- * under the admin session; the chosen path is submitted as `coverPath`.
+ * Single cover image for a Case Study (portrait) or an Article
+ * (landscape). Uploads go straight to Storage under the admin session to a
+ * fresh path from `newPath`; the chosen path is submitted as `coverPath`.
  * A replaced or removed cover that was already saved is deleted by the
  * server after the save succeeds, never before.
  */
 export function CoverUploader({
-  caseStudyId,
+  newPath,
+  frame = "portrait",
+  hint = "JPEG, PNG or WebP, up to 5 MB.",
   initialPath,
   error,
   onChange,
   onBusyChange,
 }: {
-  caseStudyId: string;
+  /** A new, unused Storage path for an image of this type. */
+  newPath: (type: MediaType) => string;
+  frame?: "portrait" | "landscape";
+  hint?: string;
   initialPath: string | null;
   error?: string;
   onChange: () => void;
@@ -57,7 +63,7 @@ export function CoverUploader({
       return;
     }
     setProblem(null);
-    const path = newCaseStudyCoverPath(caseStudyId, file.type);
+    const path = newPath(file.type);
     setUpload({ progress: 0, name: file.name });
     setAnnouncement("Uploading cover.");
     const result = await uploadMedia(path, file, (progress) => setUpload({ progress, name: file.name }));
@@ -77,7 +83,11 @@ export function CoverUploader({
     <div>
       <input type="hidden" name="coverPath" value={cover?.path ?? ""} />
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
-        <div className="flex h-56 w-44 shrink-0 items-center justify-center border border-light-grey bg-off-white p-1.5">
+        <div
+          className={`flex shrink-0 items-center justify-center border border-light-grey bg-off-white p-1.5 ${
+            frame === "landscape" ? "aspect-[16/9] w-full sm:w-72" : "h-56 w-44"
+          }`}
+        >
           {cover ? (
             // eslint-disable-next-line @next/next/no-img-element -- admin preview of an uploaded cover, uncropped
             <img src={cover.src} alt="Cover image" className="max-h-full max-w-full object-contain" />
@@ -86,7 +96,7 @@ export function CoverUploader({
           )}
         </div>
         <div className="flex flex-col items-start gap-2 text-sm">
-          <p className="text-muted">JPEG, PNG or WebP, up to 5 MB.</p>
+          <p className="text-muted">{hint}</p>
           <input
             ref={inputRef}
             id="cover-file"

@@ -7,6 +7,8 @@
  * Object paths (collision-resistant, never sequential or user-named):
  *   analysis/{analysis_id}/{uuid}.{ext}           Analysis slides
  *   case-studies/{case_study_id}/cover-{uuid}.{ext} Case Study covers
+ *   articles/{article_id}/cover-{uuid}.{ext}        Article covers
+ *   articles/{article_id}/image-{uuid}.{ext}        Article inline images
  */
 
 export const MEDIA_BUCKET = "editorial-media";
@@ -50,6 +52,28 @@ export function analysisSlidePrefix(analysisId: string): string {
 
 export function caseStudyCoverPrefix(caseStudyId: string): string {
   return `case-studies/${caseStudyId}/`;
+}
+
+export function articleMediaPrefix(articleId: string): string {
+  return `articles/${articleId}/`;
+}
+
+export function newArticleCoverPath(articleId: string, type: MediaType): string {
+  return `${articleMediaPrefix(articleId)}cover-${crypto.randomUUID()}.${MEDIA_TYPES[type]}`;
+}
+
+export function newArticleImagePath(articleId: string, type: MediaType): string {
+  return `${articleMediaPrefix(articleId)}image-${crypto.randomUUID()}.${MEDIA_TYPES[type]}`;
+}
+
+/** True if `path` is a cover object belonging to this Article. */
+export function isArticleCoverPath(articleId: string, path: string): boolean {
+  return new RegExp(`^articles/${articleId}/cover-${UUID}\\.${EXT}$`).test(path);
+}
+
+/** True if `path` is an inline image object belonging to this Article. */
+export function isArticleImagePath(articleId: string, path: string): boolean {
+  return new RegExp(`^articles/${articleId}/image-${UUID}\\.${EXT}$`).test(path);
 }
 
 export function newAnalysisSlidePath(analysisId: string, type: MediaType): string {

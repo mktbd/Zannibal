@@ -77,6 +77,9 @@ export default async function AdminDashboardPage() {
             <Link href="/admin/analysis/new" className={buttonPrimary}>
               New Analysis
             </Link>
+            <Link href="/admin/articles/new" className={buttonSecondary}>
+              New Article
+            </Link>
             <Link href="/admin/case-studies/new" className={buttonSecondary}>
               New Case Study
             </Link>
@@ -89,6 +92,12 @@ export default async function AdminDashboardPage() {
           <Stat label="Total" value={counts.analysis.total} />
           <Stat label="Published" value={counts.analysis.published} />
           <Stat label="Draft" value={counts.analysis.draft} />
+        </StatGroup>
+
+        <StatGroup id="articles" title="Articles" href="/admin/articles" linkLabel="Open" columns={3}>
+          <Stat label="Total" value={counts.articles.total} />
+          <Stat label="Published" value={counts.articles.published} />
+          <Stat label="Draft" value={counts.articles.draft} />
         </StatGroup>
 
         <StatGroup id="case-studies" title="Case Studies" href="/admin/case-studies" linkLabel="Open" columns={3}>
@@ -110,10 +119,10 @@ export default async function AdminDashboardPage() {
         </StatGroup>
       </div>
 
-      {counts.analysis.total === 0 && counts.caseStudies.total === 0 ? (
+      {counts.analysis.total === 0 && counts.articles.total === 0 && counts.caseStudies.total === 0 ? (
         <p className="mt-6 text-sm text-muted">
-          No content has been created yet. Start with a new Analysis or Case
-          Study.
+          No content has been created yet. Start with a new Analysis, Article
+          or Case Study.
         </p>
       ) : null}
     </>

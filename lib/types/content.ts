@@ -8,6 +8,8 @@
  * `supabase gen types typescript` once a live project exists).
  */
 
+import type { ArticleDoc } from "@/lib/article-body";
+
 export type ContentStatus = "draft" | "published";
 
 export interface Tag {
@@ -30,6 +32,27 @@ export interface Analysis {
   linkedinUrl: string | null;
   status: ContentStatus;
   slides: AnalysisSlide[];
+  tags: Tag[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Free, written business analysis. `body` is a validated ProseMirror/Tiptap
+ * JSON document (lib/article-body.ts ArticleDoc), never HTML. The Analysis
+ * it accompanies, if any, is found through analysis_article_links (one row
+ * per link, with the read_article_enabled toggle; publicly visible only
+ * when switched on and both records are published).
+ */
+export interface Article {
+  id: string;
+  title: string;
+  slug: string;
+  shortDescription: string | null;
+  coverImagePath: string | null;
+  body: ArticleDoc;
+  publicationDate: string;
+  status: ContentStatus;
   tags: Tag[];
   createdAt: string;
   updatedAt: string;

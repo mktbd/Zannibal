@@ -1,9 +1,10 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { MEDIA_BUCKET } from "@/lib/media";
+import { selectStaleMedia, type CleanupOptions } from "@/lib/media-cleanup";
 
 /**
- * Building blocks shared by the Analysis and Case Study Server Actions.
+ * Building blocks shared by the Analysis, Article and Case Study Server Actions.
  * Every call goes through the admin's own session (anon key + cookies),
  * so Postgres and Storage RLS decide what is allowed -- the service-role
  * client is never used here.
@@ -22,8 +23,8 @@ export const FOREIGN_KEY_VIOLATION = "23503";
  */
 export async function syncTagLinks(
   supabase: SessionClient,
-  table: "analysis_tags" | "case_study_tags",
-  ownerColumn: "analysis_id" | "case_study_id",
+  table: "analysis_tags" | "case_study_tags" | "article_tags",
+  ownerColumn: "analysis_id" | "case_study_id" | "article_id",
   ownerId: string,
   tagIds: string[],
 ): Promise<string | null> {
@@ -62,21 +63,21 @@ export async function syncTagLinks(
   return null;
 }
 
-/** Full paths of every object stored under `prefix` (a "folder"). */
+/** Full paths (and upload times) of every object stored under `prefix` (a "folder"). */
 export async function listMediaObjects(
   supabase: SessionClient,
   prefix: string,
-): Promise<{ paths: string[]; error: string | null }> {
+): Promise<{ paths: string[]; objects: { path: string; createdAt: string | null }[]; error: string | null }> {
   const folder = prefix.replace(/\/$/, "");
   const { data, error } = await supabase.storage
     .from(MEDIA_BUCKET)
     .list(folder, { limit: 1000 });
-  if (error) return { paths: [], error: error.message };
-  return {
-    // Folder placeholders have no id; only real objects are returned.
-    paths: data.filter((item) => item.id).map((item) => `${folder}/${item.name}`),
-    error: null,
-  };
+  if (error) return { paths: [], objects: [], error: error.message };
+  // Folder placeholders have no id; only real objects are returned.
+  const objects = data
+    .filter((item) => item.id)
+    .map((item) => ({ path: `${folder}/${item.name}`, createdAt: item.created_at ?? null }));
+  return { paths: objects.map((object) => object.path), objects, error: null };
 }
 
 /**
@@ -90,14 +91,14 @@ export async function removeUnreferencedMedia(
   supabase: SessionClient,
   prefix: string,
   keep: Iterable<string>,
+  options: CleanupOptions = {},
 ): Promise<number> {
-  const keepSet = new Set(keep);
-  const { paths, error } = await listMediaObjects(supabase, prefix);
+  const { objects, error } = await listMediaObjects(supabase, prefix);
   if (error) {
     console.error(`[admin/media] list ${prefix} failed:`, error);
     return 1;
   }
-  const stale = paths.filter((path) => !keepSet.has(path));
+  const stale = selectStaleMedia(objects, keep, options);
   if (stale.length === 0) return 0;
 
   const { error: removeError } = await supabase.storage.from(MEDIA_BUCKET).remove(stale);
@@ -111,7 +112,7 @@ export async function removeUnreferencedMedia(
 /** Title of the other record that already uses `slug`, if any. */
 export async function slugOwnerTitle(
   supabase: SessionClient,
-  table: "analyses" | "case_studies",
+  table: "analyses" | "case_studies" | "articles",
   slug: string,
 ): Promise<string | null> {
   const { data } = await supabase

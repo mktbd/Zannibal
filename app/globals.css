@@ -117,3 +117,90 @@ body {
 .admin-shell #admin-main:focus-visible {
   outline: none;
 }
+
+/*
+ * Article reading typography (components/articles/article-body.tsx), shared
+ * with the CMS body editor so what the editor types looks like what readers
+ * get. Plain element selectors scoped to the body container: the renderer
+ * emits fixed elements only, never classes from stored content.
+ */
+.article-body,
+.article-editor .ProseMirror {
+  font-size: 1.0625rem;
+  line-height: 1.75;
+  color: var(--color-near-black);
+}
+.article-body > * + *,
+.article-editor .ProseMirror > * + * {
+  margin-top: 1.25em;
+}
+.article-body h2,
+.article-editor .ProseMirror h2 {
+  margin-top: 2em;
+  font-size: 1.5rem;
+  line-height: 1.25;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--color-black);
+}
+.article-body h3,
+.article-editor .ProseMirror h3 {
+  margin-top: 1.75em;
+  font-size: 1.1875rem;
+  line-height: 1.35;
+  font-weight: 700;
+  color: var(--color-black);
+}
+.article-body ul,
+.article-editor .ProseMirror ul {
+  list-style: disc;
+  padding-left: 1.5em;
+}
+.article-body ol,
+.article-editor .ProseMirror ol {
+  list-style: decimal;
+  padding-left: 1.5em;
+}
+.article-body li + li,
+.article-editor .ProseMirror li + li {
+  margin-top: 0.4em;
+}
+.article-body li > * + *,
+.article-editor .ProseMirror li > * + * {
+  margin-top: 0.4em;
+}
+.article-body blockquote,
+.article-editor .ProseMirror blockquote {
+  border-left: 3px solid var(--color-black);
+  padding-left: 1.25em;
+  font-style: italic;
+}
+.article-body blockquote > * + *,
+.article-editor .ProseMirror blockquote > * + * {
+  margin-top: 0.75em;
+}
+.article-body a,
+.article-editor .ProseMirror a {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+.article-body a:hover {
+  text-decoration-thickness: 2px;
+}
+.article-body figure {
+  margin-top: 2em;
+  margin-bottom: 2em;
+}
+.article-body figure img {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: var(--color-off-white);
+}
+.article-body figcaption {
+  margin-top: 0.6em;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--color-muted);
+}

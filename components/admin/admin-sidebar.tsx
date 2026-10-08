@@ -8,6 +8,7 @@ import { logout } from "@/app/admin/(dashboard)/actions";
 const NAV_ITEMS = [
   { href: "/admin", label: "Dashboard" },
   { href: "/admin/analysis", label: "Analysis" },
+  { href: "/admin/articles", label: "Articles" },
   { href: "/admin/case-studies", label: "Case Studies" },
   { href: "/admin/tags", label: "Tags" },
   { href: "/admin/orders", label: "Orders" },

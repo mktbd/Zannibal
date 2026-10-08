@@ -20,6 +20,7 @@ const NOTICES: Record<string, string> = {
 
 const PROBLEMS: Record<string, string> = {
   tags: "The tags could not be saved. Select them again and save.",
+  link: "The Linked Article could not be saved. Choose it again and save.",
   cleanup:
     "Some replaced or removed images could not be deleted from storage. They are not used anywhere and will be cleaned up on the next save.",
 };

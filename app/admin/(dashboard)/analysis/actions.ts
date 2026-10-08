@@ -19,7 +19,9 @@ import {
   removeUnreferencedMedia,
   slugOwnerTitle,
   syncTagLinks,
+  FOREIGN_KEY_VIOLATION,
   UNIQUE_VIOLATION,
+  type SessionClient,
 } from "@/lib/data/admin/content-mutations";
 import type { EditorState } from "@/components/admin/editor-state";
 
@@ -67,8 +69,63 @@ function parseSlides(raw: string, analysisId: string): SlideInput[] | string {
   return slides;
 }
 
+/**
+ * Makes this Analysis's row in analysis_article_links match the editor:
+ * no Article -> no row; otherwise one row with the chosen Article and the
+ * toggle (kept even when the toggle is off). The link lives in its own
+ * table so RLS can hide it from the public unless it is switched on and
+ * both records are published (migration 10). Returns a field error, a
+ * general error, or null.
+ */
+async function syncArticleLink(
+  supabase: SessionClient,
+  analysisId: string,
+  articleId: string | null,
+  enabled: boolean,
+): Promise<{ field: string } | { failed: string } | null> {
+  if (articleId === null) {
+    const { error } = await supabase.from("analysis_article_links").delete().eq("analysis_id", analysisId);
+    return error ? { failed: error.message } : null;
+  }
+  const { error } = await supabase
+    .from("analysis_article_links")
+    .upsert({ analysis_id: analysisId, article_id: articleId, read_article_enabled: enabled }, { onConflict: "analysis_id" });
+  if (!error) return null;
+  // analysis_article_links_article_id_key: linked to another Analysis meanwhile.
+  if (error.code === UNIQUE_VIOLATION) return { field: "That Article was just linked to another Analysis. Choose a different one." };
+  if (error.code === FOREIGN_KEY_VIOLATION) return { field: "The selected Article no longer exists. Choose another." };
+  return { failed: error.message };
+}
+
+/** Why `articleId` can't be linked to this Analysis, or null if it can. */
+async function linkedArticleProblem(
+  supabase: SessionClient,
+  articleId: string,
+  analysisId: string | null,
+): Promise<string | null> {
+  const [article, owner] = await Promise.all([
+    supabase.from("articles").select("id").eq("id", articleId).maybeSingle<{ id: string }>(),
+    supabase
+      .from("analysis_article_links")
+      .select("analysis_id, analyses(title)")
+      .eq("article_id", articleId)
+      .maybeSingle<{ analysis_id: string; analyses: { title: string } | null }>(),
+  ]);
+  if (article.error || owner.error) {
+    console.error("[admin/analysis] linked article check failed:", article.error?.message ?? owner.error?.message);
+    return "The selected Article could not be checked. Try again.";
+  }
+  if (!article.data) return "The selected Article no longer exists. Choose another.";
+  if (owner.data && owner.data.analysis_id !== analysisId) {
+    return `That Article is already linked to the Analysis “${owner.data.analyses?.title ?? "another Analysis"}”. An Article can belong to one Analysis.`;
+  }
+  return null;
+}
+
 function revalidateAnalysisViews(id?: string) {
   revalidatePath("/admin");
+  revalidatePath("/admin/articles");
+  revalidatePath("/admin/articles/[id]/edit", "page");
   revalidatePath("/admin/tags");
   revalidatePath("/admin/analysis");
   if (id) {
@@ -130,6 +187,18 @@ export async function saveAnalysis(_prev: EditorState, formData: FormData): Prom
   const slides = mode === "edit" ? parseSlides(formString(formData, "slides"), id) : [];
   if (typeof slides === "string") fieldErrors.slides = slides;
 
+  // Linked Article: the selection is kept even while the toggle is off.
+  const readArticleEnabled = formString(formData, "readArticleEnabled") === "on";
+  const linkedArticleInput = formString(formData, "linkedArticleId");
+  let linkedArticleId: string | null = null;
+  if (linkedArticleInput !== "") {
+    if (UUID_PATTERN.test(linkedArticleInput)) linkedArticleId = linkedArticleInput.toLowerCase();
+    else fieldErrors.linkedArticle = "The selected Article is invalid. Reload and choose again.";
+  }
+  if (readArticleEnabled && linkedArticleId === null && !fieldErrors.linkedArticle) {
+    fieldErrors.linkedArticle = "Choose the Article to link, or turn off Read Article.";
+  }
+
   const supabase = await createClient();
 
   let currentStatus: "draft" | "published" = "draft";
@@ -152,6 +221,13 @@ export async function saveAnalysis(_prev: EditorState, formData: FormData): Prom
   }
 
   const targetStatus = intent === "publish" ? "published" : intent === "unpublish" ? "draft" : currentStatus;
+
+  // The Article must exist and must not already belong to another Analysis
+  // (also enforced by the analysis_article_links_article_id_key constraint).
+  if (linkedArticleId !== null && !fieldErrors.linkedArticle) {
+    const problem = await linkedArticleProblem(supabase, linkedArticleId, mode === "edit" ? id : null);
+    if (problem) fieldErrors.linkedArticle = problem;
+  }
 
   if (targetStatus === "published" && typeof slides !== "string" && slides.length === 0) {
     fieldErrors.slides =
@@ -205,12 +281,14 @@ export async function saveAnalysis(_prev: EditorState, formData: FormData): Prom
       return { status: "error", message: "The Analysis could not be created. Try again.", fieldErrors: {} };
     }
     const tagError = await syncTagLinks(supabase, "analysis_tags", "analysis_id", data.id, tagIds);
+    const linkError = await syncArticleLink(supabase, data.id, linkedArticleId, readArticleEnabled);
     revalidateAnalysisViews(data.id);
-    if (tagError) {
-      console.error("[admin/analysis] tags after create failed:", tagError);
-      redirect(`/admin/analysis/${data.id}/edit?notice=created&problem=tags`);
-    }
-    redirect(`/admin/analysis/${data.id}/edit?notice=created`);
+    const problems = [tagError ? "tags" : null, linkError ? "link" : null].filter(Boolean);
+    if (tagError) console.error("[admin/analysis] tags after create failed:", tagError);
+    if (linkError) console.error("[admin/analysis] article link after create failed:", linkError);
+    // A failed link leaves the Analysis unlinked (a draft either way); the
+    // editor reports it and the link can be chosen again.
+    redirect(`/admin/analysis/${data.id}/edit?notice=created${problems.length ? `&problem=${problems[0]}` : ""}`);
   }
 
   // ---- Edit
@@ -292,6 +370,20 @@ export async function saveAnalysis(_prev: EditorState, formData: FormData): Prom
   if (tagError) {
     console.error("[admin/analysis] tag sync failed:", tagError);
     return partial("the tags");
+  }
+
+  // 4b. Linked Article.
+  const linkError = await syncArticleLink(supabase, id, linkedArticleId, readArticleEnabled);
+  if (linkError) {
+    if ("field" in linkError) {
+      return {
+        status: "error",
+        message: "Your other changes were saved, but the Linked Article could not be. Nothing is published that wasn’t before.",
+        fieldErrors: { linkedArticle: linkError.field },
+      };
+    }
+    console.error("[admin/analysis] article link sync failed:", linkError.failed);
+    return partial("the Linked Article");
   }
 
   // 5. Publish last.

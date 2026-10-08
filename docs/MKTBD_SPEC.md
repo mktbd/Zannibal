@@ -58,6 +58,12 @@ Authors, Categories, Pricing, Newsletter, etc.) without explicit approval.
 Primary navigation: mktbd logo (→ Home), Analysis, Case Studies. There is
 no separate "Home" nav label.
 
+**Articles (approved in Stage 5A, public pages built in Stage 5C)** are a
+third content format but **not** a primary destination: they are linked
+from the **footer only** (never the header), and reached from an Analysis
+via its "Read Article" link. Planned routes: `/articles` (library) and
+`/articles/[slug]` (reading page). See section 8, "Articles".
+
 ---
 
 ## 3. Home Page
@@ -824,7 +830,8 @@ complex editorial workflows, no multiple permission levels, no analytics
 dashboards, no newsletter systems, no media-library product, no revision
 comparison, no scheduled publishing.
 
-Primary Admin areas: **Dashboard, Analysis, Case Studies, Tags, Orders.**
+Primary Admin areas: **Dashboard, Analysis, Articles, Case Studies, Tags,
+Orders.**
 
 ### Authentication
 - Supabase Auth. V1: single Admin role. **Never** a hard-coded admin
@@ -842,6 +849,10 @@ Actions: Create, Edit, Preview, Publish, Unpublish, Delete. No scheduled
 publishing. Editing published content updates immediately. Unpublish
 returns to Draft. Delete is permanent after explicit confirmation.
 
+**Linked Article (Stage 5A):** a "Read Article" toggle plus an Article
+selector (shown when the toggle is on; drafts can be selected). See
+"Articles" below for the rules.
+
 ### Case Study Content Model
 Fields: Title, Slug, Cover Image, Short Description, Product Description,
 Price (BDT), Industry, Tags, Page Count, Publication Date, Format (PDF for
@@ -854,8 +865,8 @@ Actions: Create, Edit, Preview, Publish, Unpublish, Delete. Deleting a
 Case Study must **never** delete or corrupt historical Orders.
 
 ### Tags
-One centralized, reusable tag reservoir shared between Analysis and Case
-Studies. Editors can view, create, rename, and select existing tags (with
+One centralized, reusable tag reservoir shared between Analysis, Articles
+and Case Studies. Editors can view, create, rename, and select existing tags (with
 autocomplete/suggestions) while editing content. Guard against accidental
 duplicate variants (e.g. "F&B" vs "F & B" vs "Food&B"). Prevent deleting a
 tag that's actively attached to content unless the relationship is handled
@@ -868,6 +879,157 @@ Number, Case Study ID (where available), snapshotted Case Study Title,
 snapshotted Price, submission timestamp, Status (Pending/Fulfilled/
 Invalid). Orders contain customer/payment info and must **never** be
 publicly queryable.
+
+### Articles (Stage 5A — database + CMS; public pages in 5C)
+
+Articles are **free, written business analysis**: the long-form companion
+to a visual Analysis, or a standalone piece. Same lifecycle as the other
+content (Draft/Published, Create, Edit, Preview, Publish, Unpublish, Delete
+with confirmation).
+
+**Content model** (`public.articles`, proposed migration
+`20261008000010_articles.sql`):
+
+| Field | Column | Rules |
+|---|---|---|
+| Title | `title` | required, ≤ 200 |
+| Slug | `slug` | auto from title, editable, unique among Articles (`articles_slug_key`), URL-safe (`articles_slug_format`); an Article may reuse an Analysis/Case Study slug (separate URL space) |
+| Short Description | `short_description` | optional, ≤ 300 (listings, search/meta description) |
+| Cover | `cover_image_path` | optional, landscape (about 16:9), `editorial-media` |
+| Body | `body` (`jsonb`) | rich text as a structured ProseMirror/Tiptap JSON document — **never HTML** |
+| Publication Date | `publication_date` | required, defaults to today (Dhaka) |
+| Status | `status` (`content_status`) | Draft/Published |
+| Tags | `article_tags` | shared reservoir, same selector + inline creation as Analysis |
+| — | `created_at`, `updated_at` | timestamps (`set_updated_at` trigger) |
+
+Publishing requires title, slug, date and body text (a cover is optional).
+A published Article can't be emptied — unpublish it first.
+
+**Rich text** — editor: Tiptap 3 (headless ProseMirror), pinned
+`@tiptap/{pm,react,starter-kit}@3.31.4`. Allowed, and only allowed:
+paragraphs, H2, H3, bold, italic, bulleted and numbered lists, block
+quotes, links (citations are links), line breaks, and inline images with
+alt text and an optional caption. No H1 (the page title is the H1), no
+code, tables, colours, fonts, alignment, embeds or raw HTML — it's a
+writing tool, not a page builder. Pasting from Word/Google Docs/the web is
+supported: the paste is parsed through the same schema, so formatting
+outside the allow-list is dropped and its text kept (H1/H4 become
+paragraphs, scripts/iframes/foreign images/styles disappear, unsafe links
+lose the link but keep the text). Links: toolbar link box (accepts
+`https://…`, a bare domain, or an email address → `mailto:`), opened in a
+new tab with `rel="noopener noreferrer"` when rendered.
+
+**Validation and rendering** (`lib/article-body.ts`,
+`components/articles/article-body.tsx`): every save rebuilds the body
+server-side from an allow-list (node types, marks, attributes); anything
+else — an unknown node/mark, a `javascript:`/`data:`/relative link, an
+image path that isn't one of this Article's uploads, > 900 KB, > 100
+images, > 16 levels deep — rejects the save with a message (never silently
+"fixed"). The renderer maps each node to a fixed React element and never
+uses `dangerouslySetInnerHTML`; stored bodies are re-validated before
+rendering, so even a row written directly through the API renders safely
+(invalid → empty). Reading typography is shared by the editor and the
+renderer (`.article-body` in `app/globals.css`).
+
+**Analysis ↔ Article relationship (one-to-one, edited on the Analysis):**
+- Stored **once**, as one row in `analysis_article_links`
+  (`analysis_id` primary key → `analyses`, `article_id` `UNIQUE` →
+  `articles`, both `ON DELETE CASCADE`, plus `read_article_enabled`, the
+  toggle). There are no link columns on `analyses` or `articles`; each side
+  finds the other through that row (PostgREST embeds
+  `analysis_article_links(article_id, …)` /
+  `analysis_article_links(…, analyses(…))`), so the two sides can never
+  disagree.
+- **Why a separate table:** a column on `analyses` would be readable
+  wherever the Analysis is public, exposing a draft Article's id or a link
+  the editor switched off. On its own table, RLS decides per link: the
+  public sees a link row **only** when `read_article_enabled` is true and
+  the Analysis and the Article are both published; admins see all rows.
+  Nothing is filtered in the browser.
+- Primary key = an Analysis has at most one Article; `UNIQUE (article_id)`
+  = an Article belongs to at most one Analysis (V1). The Analysis
+  editor disables Articles already linked elsewhere and the server refuses
+  them (pre-check + constraint).
+- The selected Article may be a draft. Toggle **off** keeps the
+  association but hides the links.
+- **Public links** ("Read Article" on the Analysis viewer, "See Visual
+  Story →" on the Article page) show only when the toggle is on, an Article
+  is linked, **and both records are published** (`isArticleLinkVisible`,
+  `lib/article-links.ts`) — the same rule the link table's RLS policy
+  enforces for public reads.
+- **Unpublish** either side → the link row becomes invisible to the
+  public (nothing is changed or deleted). **Delete an Article** → its tag
+  links and its link row cascade, its Storage folder is emptied, and the
+  Analysis stays, now without a linked Article. **Delete an Analysis** →
+  its link row cascades; the Article is untouched.
+- The Article editor shows the linked Analysis read-only; the link is
+  edited only on the Analysis.
+
+**Media:** existing `editorial-media` bucket (public read by URL,
+admin-only writes and listing, 5 MB, JPEG/PNG/WebP — no PDFs) under
+`articles/{article_id}/cover-{uuid}.ext` and
+`articles/{article_id}/image-{uuid}.ext`. Cover and images are added after
+the first save (they need the Article's id). Cleanup rules
+(`lib/media-cleanup.ts`, `saveArticle`/`deleteArticle`):
+- objects are deleted only **after** the database write succeeded; any
+  failed step returns before cleanup, so a failed save deletes nothing;
+- the keep-set is what this save wrote **plus** what the row references
+  when re-read after the write; if that re-read fails, cleanup is skipped;
+- a cover/image this save replaced or removed is deleted at once; an
+  upload that was never saved is kept for an hour (it may belong to
+  another tab or session) and swept by a later save;
+- only `articles/{this id}/cover-…`/`image-…` names are ever deleted.
+  Bodies and covers can only reference their own Article's folder
+  (validated on save), and Analysis/Case Study media live under other
+  prefixes, so media used by another record can't be reached;
+- a failed Storage delete leaves the saved Article intact; the editor shows
+  "could not be deleted from storage" and a later save retries.
+
+**CMS:** `/admin/articles` (search + status filter, linked Analysis shown),
+`/admin/articles/new`, `/admin/articles/[id]/edit` (Save draft · Publish /
+Update · Unpublish, Preview, Delete with confirmation), and
+`/admin/articles/[id]/preview` — admin-only (`requireAdmin()` + RLS),
+`noindex`, laid out like the planned public reading page. Dashboard shows
+Article counts; the Tags screen counts Article usage and refuses to delete
+a tag an Article uses.
+
+#### Public Articles — requirements for Stage 5C (not built yet)
+
+- **Routes:** `/articles` (library) and `/articles/[slug]` (reading page).
+  Published Articles only; unknown or draft slugs 404.
+- **Navigation:** an "Articles" link in the **footer**, not the header
+  (header stays logo · Analysis · Case Studies).
+- **Library (`/articles`):** a **featured Latest Article** at the top (the
+  newest published Article: large landscape cover, title, short
+  description, date, "Read Article"), then the rest as a card library —
+  **4 columns on desktop, 2 columns on mobile** (tablet in between), each
+  card a **landscape** cover (16:9, cropped `object-cover`; a neutral
+  placeholder when no cover), title, date and tags. Ordered by
+  `publication_date desc, created_at desc`. Same search/topic patterns as
+  the Analysis archive where useful.
+- **Reading page (`/articles/[slug]`):** single readable column (≈ 44rem),
+  title as the only H1, short description as standfirst, date, tags,
+  landscape cover, body via `ArticleBody`. If a published Analysis links to
+  it with the toggle on: a **"See Visual Story →"** CTA to that Analysis.
+- **Analysis viewer:** **"Read Article"** CTA to `/articles/[slug]` when
+  the visibility rule holds. The public Analysis query embeds
+  `analysis_article_links(articles(slug))` then — RLS returns the link only
+  when it may be shown.
+- **Canonical / SEO / AEO:** canonical URL `/articles/[slug]` (absolute,
+  from the site URL); `<title>` = Article title, meta description = short
+  description (fallback: first paragraph, trimmed); Open Graph/Twitter
+  `article` cards with the landscape cover; JSON-LD `Article`/
+  `NewsArticle` (headline, description, image, `datePublished`,
+  `dateModified` = `updated_at`, author/publisher = mktbd, `mainEntityOfPage`,
+  `keywords` from tags) and `BreadcrumbList`; when linked, cross-reference
+  the Analysis (e.g. `isRelatedTo`/`relatedLink`). Semantic structure for
+  answer engines: one H1, H2/H3 hierarchy from the editor, `<article>`,
+  `<time datetime>`, figures with `figcaption`, citations as real outbound
+  links. Include published Articles in the sitemap with `lastmod`; ISR
+  with revalidation on publish/unpublish/update (the CMS already
+  revalidates `/analysis/[slug]`; add `/articles` and `/articles/[slug]`).
+  The Analysis and its Article are distinct pages (carousel vs text), so
+  each is canonical to itself — no duplicate-content canonicalisation.
 
 ---
 
@@ -928,11 +1090,16 @@ app/
         actions.ts                 saveAnalysis / deleteAnalysis Server Actions
         analysis-editor.tsx        Client editor form
         slide-manager.tsx          Upload, reorder (drag + Up/Down), remove
+      articles/                  Articles CMS (Stage 5A)     /admin/articles
+        page.tsx, new/, [id]/edit/, [id]/preview/   (same shape as analysis/)
+        actions.ts                 saveArticle / deleteArticle
+        article-editor.tsx         Client editor form (+ read-only Linked Analysis)
+        body-editor.tsx            Tiptap rich-text body + toolbar, link box, image upload
+        figure-node.tsx            Inline image node (path, alt, caption)
       case-studies/              Case Studies CMS            /admin/case-studies
         page.tsx, new/, [id]/edit/, [id]/preview/   (same shape as analysis/)
         actions.ts                 saveCaseStudy / deleteCaseStudy
         case-study-editor.tsx      Client editor form
-        cover-uploader.tsx         Single cover upload/replace/remove
       tags/                      Tag management              /admin/tags
         page.tsx                   List with usage counts
         actions.ts                 create/rename/delete Server Actions
@@ -984,6 +1151,9 @@ components/
                                 description, related topics)
     purchase-flow.tsx          Client: purchase form, submission, errors,
                                 confirmation (Stage 4E)
+  articles/
+    article-body.tsx           Validated Article JSON -> React elements (no
+                                HTML injection); admin preview now, public 5C
   admin/
     admin-sidebar.tsx         Admin nav: sidebar (lg+), menu disclosure below
     page-header.tsx            Page title + description + contextual actions
@@ -998,6 +1168,8 @@ components/
     status-badge.tsx           Draft / Published marker
     preview-carousel.tsx       Simple slide viewer for admin previews
     upload.ts                  Browser → Storage upload with progress
+    cover-uploader.tsx         Single cover upload/replace/remove (portrait
+                                Case Study / landscape Article frame)
 
 lib/
   supabase/
@@ -1021,6 +1193,10 @@ lib/
   media.ts                   Image type/size rules, Storage path builders
                               and ownership checks, public URLs
   validation.ts              Server-side field parsers (dates, URLs, BDT…)
+  article-body.ts            Article body allow-list validator (Tiptap JSON),
+                              link/image rules, size limits (Stage 5A)
+  article-links.ts           isArticleLinkVisible: Read Article / See Visual
+                              Story rule (toggle + linked + both published)
   format.ts                  Date, month-year, Dhaka date-time and BDT
                               formatting
   site.ts                    Public identity: name, tagline, primary nav,
@@ -1276,7 +1452,8 @@ Explicitly out of scope until approved otherwise:
   licensing workflows, recommendation engines, PDF previews on Case Study
   pages
 - External CMS integration (Sanity, WordPress, Contentful, Strapi, etc.)
-- WYSIWYG page building, multi-role permissions, analytics dashboards,
+- WYSIWYG page building (the Article rich-text editor is a constrained
+  writing tool, not a page builder), multi-role permissions, analytics dashboards,
   newsletter systems, media-library products, revision comparison,
   scheduled publishing in Admin
 - Generic CMS controls for homepage imagery/copy
@@ -1721,3 +1898,22 @@ domain for `metadataBase` are still to be provided.
   limiting for `POST /api/orders`, production environment variables, full
   SEO pass, performance hardening.
 
+### Stage 5A — Articles database + CMS (this task)
+- Proposed migration `supabase/migrations/20261008000010_articles.sql`:
+  `articles`, `article_tags`, tag-visibility policy extended to published
+  Articles, and `analysis_article_links` (one-to-one Analysis ↔ Article
+  link with the Read Article toggle; public rows only when switched on and
+  both published). **Applied to the local test stack
+  only — not to production, and not added to the migrate workflow's
+  expected list, pending review.**
+- CMS: Articles list/new/edit/preview, rich-text body editor (Tiptap 3,
+  pinned), landscape cover + inline images with captions, shared tags,
+  Analysis "Linked Article" section, sidebar item, dashboard counts, Tags
+  usage column. Details in section 8, "Articles".
+- Shared `CoverUploader` moved to `components/admin/cover-uploader.tsx`
+  (path factory + portrait/landscape frame); Case Study behaviour
+  unchanged.
+- No public `/articles` pages, no change to the public design, Analysis
+  viewer, Case Studies or order flow (5C requirements recorded in
+  section 8).
+- Pre-production hardening items from 4E/4F remain open and unchanged.

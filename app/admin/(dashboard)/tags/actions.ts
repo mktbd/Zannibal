@@ -55,8 +55,8 @@ type InsertTagResult =
 
 /**
  * The single create path for tags, used by the Tags screen and by the
- * inline "Create tag" option in the Analysis/Case Study editors, so both
- * apply the same cleaning, validation and duplicate handling.
+ * inline "Create tag" option in the Analysis/Article/Case Study editors, so
+ * all of them apply the same cleaning, validation and duplicate handling.
  */
 async function insertTag(rawName: string): Promise<InsertTagResult> {
   const name = cleanTagName(rawName);
@@ -156,28 +156,22 @@ export async function deleteTag(
   const supabase = await createClient();
 
   // Checked here for a clear message; the ON DELETE RESTRICT foreign keys
-  // on analysis_tags/case_study_tags enforce the same rule in the database
-  // (and cover the race where content is tagged between check and delete).
-  const [analysisLinks, caseStudyLinks] = await Promise.all([
-    supabase
-      .from("analysis_tags")
-      .select("tag_id", { count: "exact", head: true })
-      .eq("tag_id", id),
-    supabase
-      .from("case_study_tags")
-      .select("tag_id", { count: "exact", head: true })
-      .eq("tag_id", id),
-  ]);
+  // on analysis_tags/article_tags/case_study_tags enforce the same rule in
+  // the database (and cover the race where content is tagged between check
+  // and delete).
+  const links = await Promise.all(
+    (["analysis_tags", "article_tags", "case_study_tags"] as const).map((table) =>
+      supabase.from(table).select("tag_id", { count: "exact", head: true }).eq("tag_id", id),
+    ),
+  );
 
-  if (analysisLinks.error || caseStudyLinks.error) {
-    console.error(
-      "[admin/tags] usage check failed:",
-      analysisLinks.error?.message ?? caseStudyLinks.error?.message,
-    );
+  const linkError = links.find((result) => result.error)?.error;
+  if (linkError) {
+    console.error("[admin/tags] usage check failed:", linkError.message);
     return { status: "error", message: "The tag could not be deleted. Try again." };
   }
 
-  const inUse = (analysisLinks.count ?? 0) + (caseStudyLinks.count ?? 0);
+  const inUse = links.reduce((sum, result) => sum + (result.count ?? 0), 0);
   if (inUse > 0) {
     return {
       status: "error",

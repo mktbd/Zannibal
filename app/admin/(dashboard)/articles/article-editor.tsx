@@ -1,43 +1,46 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState, useCallback, useState } from "react";
 import { slugify } from "@/lib/slug";
-import { newCaseStudyCoverPath } from "@/lib/media";
+import { newArticleCoverPath } from "@/lib/media";
+import type { ArticleDoc } from "@/lib/article-body";
 import type { ContentStatus } from "@/lib/types/content";
+import type { LinkedAnalysis } from "@/lib/data/admin/content";
 import { FormField, fieldA11y } from "@/components/admin/form-field";
 import { TagSelector, type TagOption } from "@/components/admin/tag-selector";
 import { EditorActionBar, FormError, useAutoSlug, useUnsavedChangesWarning } from "@/components/admin/editor-parts";
 import { initialEditorState } from "@/components/admin/editor-state";
-import { linkButton, textInput } from "@/components/admin/ui";
 import { CoverUploader } from "@/components/admin/cover-uploader";
-import { saveCaseStudy } from "./actions";
+import { StatusBadge } from "@/components/admin/status-badge";
+import { linkButton, textInput } from "@/components/admin/ui";
+import { saveArticle } from "./actions";
+import { BodyEditor } from "./body-editor";
 
-export interface CaseStudyEditorValues {
+export interface ArticleEditorValues {
   id: string | null;
   title: string;
   slug: string;
-  coverImagePath: string | null;
   shortDescription: string;
-  productDescription: string;
-  /** Blank when unset (stored as 0 -- see saveCaseStudy). */
-  priceBdt: string;
-  industry: string;
-  pageCount: string;
+  coverImagePath: string | null;
+  body: ArticleDoc;
   publicationDate: string;
   status: ContentStatus;
   tagIds: string[];
+  linkedAnalysis: LinkedAnalysis | null;
 }
 
-export function CaseStudyEditor({ values, allTags }: { values: CaseStudyEditorValues; allTags: TagOption[] }) {
+export function ArticleEditor({ values, allTags }: { values: ArticleEditorValues; allTags: TagOption[] }) {
   const mode = values.id ? "edit" : "create";
-  const [state, formAction, pending] = useActionState(saveCaseStudy, initialEditorState);
+  const [state, formAction, pending] = useActionState(saveArticle, initialEditorState);
   const errors = state.status === "error" ? state.fieldErrors : {};
 
   const [title, setTitle] = useState(values.title);
+  const [description, setDescription] = useState(values.shortDescription);
   const slug = useAutoSlug(values.slug, mode === "create", slugify);
-  const [shortDescription, setShortDescription] = useState(values.shortDescription);
   const [dirty, setDirty] = useState(false);
-  const [uploading, setUploading] = useState(false);
+  const [coverBusy, setCoverBusy] = useState(false);
+  const [bodyBusy, setBodyBusy] = useState(false);
   const markDirty = useCallback(() => setDirty(true), []);
   useUnsavedChangesWarning(dirty && !pending);
 
@@ -49,7 +52,7 @@ export function CaseStudyEditor({ values, allTags }: { values: CaseStudyEditorVa
       <FormError state={state} />
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_16rem]">
-        <div className="flex flex-col gap-6">
+        <div className="flex min-w-0 flex-col gap-6">
           <section aria-labelledby="details-heading" className="flex flex-col gap-5 border border-light-grey bg-white p-5">
             <h2 id="details-heading" className="text-sm font-semibold">
               Details
@@ -85,7 +88,7 @@ export function CaseStudyEditor({ values, allTags }: { values: CaseStudyEditorVa
             >
               <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center">
                 <div className="flex min-w-0 flex-1 items-center rounded-sm border border-light-grey bg-white focus-within:border-black">
-                  <span className="hidden pl-3 text-sm text-muted sm:inline">/case-studies/</span>
+                  <span className="hidden pl-3 text-sm text-muted sm:inline">/articles/</span>
                   <input
                     {...fieldA11y("slug", errors.slug)}
                     name="slug"
@@ -111,87 +114,21 @@ export function CaseStudyEditor({ values, allTags }: { values: CaseStudyEditorVa
             <FormField
               id="shortDescription"
               label="Short description"
-              publishRequired
               error={errors.shortDescription}
-              hint={`${shortDescription.length}/300 · Shown in the catalogue.`}
+              hint={`Optional. One or two sentences for listings and search results. ${description.length}/300`}
             >
               <textarea
                 {...fieldA11y("shortDescription", errors.shortDescription)}
                 name="shortDescription"
                 rows={2}
                 maxLength={300}
-                value={shortDescription}
-                onChange={(event) => setShortDescription(event.target.value)}
-                className={`${textInput} resize-y`}
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+                className={textInput}
               />
             </FormField>
 
-            <FormField
-              id="productDescription"
-              label="Product description"
-              publishRequired
-              error={errors.productDescription}
-              hint="Plain text; blank lines separate paragraphs. Describe the situation and what readers will understand, without giving away paid conclusions."
-            >
-              <textarea
-                {...fieldA11y("productDescription", errors.productDescription)}
-                name="productDescription"
-                rows={10}
-                maxLength={10000}
-                defaultValue={values.productDescription}
-                className={`${textInput} resize-y leading-relaxed`}
-              />
-            </FormField>
-
-            <FormField id="tags" label="Tags" error={errors.tags} hint="Shown as Related Topics.">
-              <TagSelector allTags={allTags} initialSelectedIds={values.tagIds} onChange={markDirty} inputId="tags" />
-            </FormField>
-          </section>
-
-          <section aria-labelledby="product-heading" className="border border-light-grey bg-white p-5">
-            <h2 id="product-heading" className="text-sm font-semibold">
-              Product information
-            </h2>
-            <div className="mt-4 grid gap-5 sm:grid-cols-2">
-              <FormField id="priceBdt" label="Price (BDT)" publishRequired error={errors.priceBdt}>
-                <div className="flex items-center rounded-sm border border-light-grey bg-white focus-within:border-black">
-                  <span className="pl-3 text-sm text-muted">BDT</span>
-                  <input
-                    {...fieldA11y("priceBdt", errors.priceBdt)}
-                    name="priceBdt"
-                    type="text"
-                    inputMode="decimal"
-                    autoComplete="off"
-                    placeholder="1500"
-                    defaultValue={values.priceBdt}
-                    className="min-w-0 flex-1 bg-transparent px-2 py-1.5 text-sm tabular-nums outline-none"
-                  />
-                </div>
-              </FormField>
-              <FormField id="industry" label="Industry" publishRequired error={errors.industry}>
-                <input
-                  {...fieldA11y("industry", errors.industry)}
-                  name="industry"
-                  type="text"
-                  maxLength={100}
-                  placeholder="e.g. Fintech"
-                  defaultValue={values.industry}
-                  className={textInput}
-                />
-              </FormField>
-              <FormField id="pageCount" label="Page count" publishRequired error={errors.pageCount}>
-                <input
-                  {...fieldA11y("pageCount", errors.pageCount)}
-                  name="pageCount"
-                  type="number"
-                  inputMode="numeric"
-                  min={1}
-                  max={5000}
-                  step={1}
-                  defaultValue={values.pageCount}
-                  className={textInput}
-                />
-              </FormField>
+            <div className="grid gap-5 sm:grid-cols-2">
               <FormField id="publicationDate" label="Publication date" required error={errors.publicationDate}>
                 <input
                   {...fieldA11y("publicationDate", errors.publicationDate)}
@@ -201,11 +138,11 @@ export function CaseStudyEditor({ values, allTags }: { values: CaseStudyEditorVa
                   className={textInput}
                 />
               </FormField>
-              <div className="flex flex-col gap-1.5">
-                <span className="text-sm font-medium">Format</span>
-                <p className="py-1.5 text-sm">PDF</p>
-              </div>
             </div>
+
+            <FormField id="tags" label="Tags" error={errors.tags}>
+              <TagSelector allTags={allTags} initialSelectedIds={values.tagIds} onChange={markDirty} inputId="tags" />
+            </FormField>
           </section>
 
           <section aria-labelledby="cover-heading" className="border border-light-grey bg-white p-5">
@@ -213,16 +150,18 @@ export function CaseStudyEditor({ values, allTags }: { values: CaseStudyEditorVa
               <h2 id="cover-heading" className="text-sm font-semibold">
                 Cover image
               </h2>
-              <span className="text-xs text-muted">Required to publish</span>
+              <span className="text-xs text-muted">Optional · landscape</span>
             </div>
             <div className="mt-3">
               {values.id ? (
                 <CoverUploader
-                  newPath={(type) => newCaseStudyCoverPath(values.id!, type)}
+                  newPath={(type) => newArticleCoverPath(values.id!, type)}
+                  frame="landscape"
+                  hint="Landscape (about 16:9). JPEG, PNG or WebP, up to 5 MB."
                   initialPath={values.coverImagePath}
                   error={errors.cover}
                   onChange={markDirty}
-                  onBusyChange={setUploading}
+                  onBusyChange={setCoverBusy}
                 />
               ) : (
                 <p className="text-sm text-muted">Save the draft first, then add the cover.</p>
@@ -232,32 +171,79 @@ export function CaseStudyEditor({ values, allTags }: { values: CaseStudyEditorVa
         </div>
 
         <aside className="flex flex-col gap-3 text-sm">
-          <div className="border border-light-grey bg-white p-4 lg:sticky lg:top-8">
+          <div className="border border-light-grey bg-white p-4">
             <h2 className="font-semibold">Publishing</h2>
             <p className="mt-1 text-muted">
               {values.status === "published"
                 ? "Live. Saving with Update changes the public version immediately."
                 : "Draft. Not visible to the public until published."}
             </p>
-            <p className="mt-2 text-muted">
-              To publish: cover, short and product descriptions, a price above 0, industry and page count.
-            </p>
-            <p className="mt-2 text-muted">
-              The paid PDF is not uploaded here; it is delivered manually.
-            </p>
+            <p className="mt-2 text-muted">To publish: title, slug, date and body text.</p>
           </div>
+          {values.id ? <LinkedAnalysisPanel linked={values.linkedAnalysis} articleStatus={values.status} /> : null}
         </aside>
       </div>
+
+      <section aria-labelledby="body-label" className="mt-6">
+        <div className="mb-2 flex items-baseline justify-between">
+          <h2 id="body-label" className="text-sm font-semibold">
+            Body
+          </h2>
+          <span className="text-xs text-muted">Required to publish</span>
+        </div>
+        <BodyEditor
+          articleId={values.id}
+          initialBody={values.body}
+          error={errors.body}
+          onChange={markDirty}
+          onBusyChange={setBodyBusy}
+        />
+        <p id="body-message" className={errors.body ? "mt-1.5 text-sm text-red-700" : "mt-1.5 text-xs text-muted"}>
+          {errors.body ??
+            "Paste from a document or type. Use H2/H3 for sections; link sources to cite them. Formatting outside the toolbar is removed."}
+        </p>
+      </section>
 
       <EditorActionBar
         mode={mode}
         status={values.status}
         pending={pending}
-        blocked={uploading}
-        blockedReason="Waiting for the upload to finish…"
-        previewHref={values.id ? `/admin/case-studies/${values.id}/preview` : undefined}
+        blocked={coverBusy || bodyBusy}
+        blockedReason="Waiting for uploads to finish…"
+        previewHref={values.id ? `/admin/articles/${values.id}/preview` : undefined}
         dirty={dirty}
       />
     </form>
+  );
+}
+
+/**
+ * Read-only: the link is owned and edited on the Analysis ("Linked
+ * Article"), so it can never be set in two places.
+ */
+function LinkedAnalysisPanel({ linked, articleStatus }: { linked: LinkedAnalysis | null; articleStatus: ContentStatus }) {
+  return (
+    <div className="border border-light-grey bg-white p-4">
+      <h2 className="font-semibold">Linked Analysis</h2>
+      {linked ? (
+        <>
+          <p className="mt-1 flex flex-wrap items-center gap-2">
+            <Link href={`/admin/analysis/${linked.id}/edit`} className="font-medium underline-offset-4 hover:underline">
+              {linked.title}
+            </Link>
+            <StatusBadge status={linked.status} />
+          </p>
+          <p className="mt-2 text-muted">
+            {!linked.readArticleEnabled
+              ? "“Read Article” is turned off on that Analysis, so no links are shown."
+              : linked.status === "published" && articleStatus === "published"
+                ? "Both are published, so the “Read Article” and “See Visual Story” links are enabled."
+                : "Links appear once both the Analysis and this Article are published."}
+          </p>
+        </>
+      ) : (
+        <p className="mt-1 text-muted">None. Link this Article from an Analysis’s “Linked Article” section.</p>
+      )}
+    </div>
   );
 }

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireAdmin } from "@/lib/auth/admin";
-import { getAnalysis, getTagOptions } from "@/lib/data/admin/content";
+import { getAnalysis, getTagOptions, listArticleOptions } from "@/lib/data/admin/content";
 import { UUID_PATTERN } from "@/lib/validation";
 import { PageHeader } from "@/components/admin/page-header";
 import { DeleteSection, SaveNotice } from "@/components/admin/editor-parts";
@@ -22,7 +22,12 @@ export default async function AdminEditAnalysisPage({
   await requireAdmin();
   const { id } = await params;
   if (!UUID_PATTERN.test(id)) notFound();
-  const [analysis, allTags, query] = await Promise.all([getAnalysis(id), getTagOptions(), searchParams]);
+  const [analysis, allTags, articleOptions, query] = await Promise.all([
+    getAnalysis(id),
+    getTagOptions(),
+    listArticleOptions(),
+    searchParams,
+  ]);
   if (!analysis) notFound();
 
   return (
@@ -41,6 +46,7 @@ export default async function AdminEditAnalysisPage({
       <AnalysisEditor
         key={analysis.updatedAt}
         allTags={allTags}
+        articleOptions={articleOptions}
         values={{
           id: analysis.id,
           title: analysis.title,
@@ -50,12 +56,14 @@ export default async function AdminEditAnalysisPage({
           status: analysis.status,
           tagIds: analysis.tagIds,
           slides: analysis.slides,
+          linkedArticleId: analysis.linkedArticleId,
+          readArticleEnabled: analysis.readArticleEnabled,
         }}
       />
       <DeleteSection
         id={analysis.id}
         label="Analysis"
-        consequence="Removes the Analysis, its slides and tag links, and its uploaded slide images. Tags themselves are kept."
+        consequence="Removes the Analysis, its slides and tag links, and its uploaded slide images. Tags and any linked Article are kept."
         action={deleteAnalysis}
       />
     </>

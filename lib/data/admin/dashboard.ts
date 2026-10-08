@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 
 export interface DashboardCounts {
   analysis: { total: number; published: number; draft: number };
+  articles: { total: number; published: number; draft: number };
   caseStudies: { total: number; published: number; draft: number };
   tags: number;
   pendingOrders: number;
@@ -20,7 +21,7 @@ export async function getDashboardCounts(): Promise<DashboardCounts> {
   const supabase = await createClient();
 
   const count = async (
-    table: "analyses" | "case_studies" | "tags" | "orders",
+    table: "analyses" | "articles" | "case_studies" | "tags" | "orders",
     filter?: { column: "status"; value: string },
   ) => {
     let query = supabase.from(table).select("*", { count: "exact", head: true });
@@ -40,6 +41,9 @@ export async function getDashboardCounts(): Promise<DashboardCounts> {
     analysisTotal,
     analysisPublished,
     analysisDraft,
+    articlesTotal,
+    articlesPublished,
+    articlesDraft,
     caseStudiesTotal,
     caseStudiesPublished,
     caseStudiesDraft,
@@ -49,6 +53,9 @@ export async function getDashboardCounts(): Promise<DashboardCounts> {
     count("analyses"),
     count("analyses", { column: "status", value: "published" }),
     count("analyses", { column: "status", value: "draft" }),
+    count("articles"),
+    count("articles", { column: "status", value: "published" }),
+    count("articles", { column: "status", value: "draft" }),
     count("case_studies"),
     count("case_studies", { column: "status", value: "published" }),
     count("case_studies", { column: "status", value: "draft" }),
@@ -61,6 +68,11 @@ export async function getDashboardCounts(): Promise<DashboardCounts> {
       total: analysisTotal,
       published: analysisPublished,
       draft: analysisDraft,
+    },
+    articles: {
+      total: articlesTotal,
+      published: articlesPublished,
+      draft: articlesDraft,
     },
     caseStudies: {
       total: caseStudiesTotal,

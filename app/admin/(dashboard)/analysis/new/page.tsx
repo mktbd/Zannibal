@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requireAdmin } from "@/lib/auth/admin";
-import { getTagOptions } from "@/lib/data/admin/content";
+import { getTagOptions, listArticleOptions } from "@/lib/data/admin/content";
 import { todayInDhaka } from "@/lib/validation";
 import { PageHeader } from "@/components/admin/page-header";
 import { linkButton } from "@/components/admin/ui";
@@ -10,7 +10,7 @@ export const metadata = { title: "New Analysis · mktbd admin" };
 
 export default async function AdminNewAnalysisPage() {
   await requireAdmin();
-  const allTags = await getTagOptions();
+  const [allTags, articleOptions] = await Promise.all([getTagOptions(), listArticleOptions()]);
 
   return (
     <>
@@ -25,6 +25,7 @@ export default async function AdminNewAnalysisPage() {
       />
       <AnalysisEditor
         allTags={allTags}
+        articleOptions={articleOptions}
         values={{
           id: null,
           title: "",
@@ -34,6 +35,8 @@ export default async function AdminNewAnalysisPage() {
           status: "draft",
           tagIds: [],
           slides: [],
+          linkedArticleId: null,
+          readArticleEnabled: false,
         }}
       />
     </>

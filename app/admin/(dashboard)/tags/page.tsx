@@ -14,7 +14,7 @@ export default async function AdminTagsPage() {
     <>
       <PageHeader
         title="Tags"
-        description="One shared tag list for Analysis and Case Studies. Names that differ only by capitalisation or spacing count as the same tag."
+        description="One shared tag list for Analysis, Articles and Case Studies. Names that differ only by capitalisation or spacing count as the same tag."
       />
 
       <section aria-labelledby="new-tag-heading" className="mt-6">
@@ -39,19 +39,20 @@ export default async function AdminTagsPage() {
             <p className="text-sm font-medium">No tags yet</p>
             <p className="mt-1 text-sm text-muted">
               Create the first tag above. Tags can then be attached to
-              Analysis and Case Studies.
+              Analysis, Articles and Case Studies.
             </p>
           </div>
         ) : (
           <div className="overflow-x-auto border border-light-grey bg-white">
-            <table className="w-full border-collapse text-sm sm:min-w-[40rem]">
+            <table className="w-full border-collapse text-sm sm:min-w-[46rem]">
               <caption className="sr-only">
-                Tags with the number of Analysis and Case Study entries using each
+                Tags with the number of Analysis, Article and Case Study entries using each
               </caption>
               <thead>
                 <tr className="border-b border-light-grey text-left text-xs font-medium uppercase tracking-wide text-muted">
                   <th scope="col" className="px-4 py-2.5">Name</th>
                   <th scope="col" className="hidden w-24 px-4 py-2.5 text-right sm:table-cell">Analysis</th>
+                  <th scope="col" className="hidden w-24 px-4 py-2.5 text-right sm:table-cell">Articles</th>
                   <th scope="col" className="hidden w-28 px-4 py-2.5 text-right sm:table-cell">Case Studies</th>
                   <th scope="col" className="w-16 px-4 py-2.5 text-right sm:w-20">Total</th>
                   <th scope="col" className="px-4 py-2.5 text-right sm:w-48">

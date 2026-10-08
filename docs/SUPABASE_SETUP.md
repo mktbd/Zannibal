@@ -63,6 +63,7 @@ commented; read them in order to understand the schema:
 | `20261003000007_orders.sql` | `orders`, order-number generation |
 | `20261003000008_storage.sql` | `editorial-media` bucket + Storage policies |
 | `20261004000009_storage_restrict_listing.sql` | replaces the public `SELECT` policy on `storage.objects` with an admin-only one, so the bucket can't be listed anonymously |
+| `20261008000010_articles.sql` | **PROPOSED (Stage 5A), not deployed.** `articles`, `article_tags`, Article branch of the tag-visibility policy, `analysis_article_links` (one-to-one Analysis ↔ Article link; publicly readable only when switched on and both records are published). Applied to local test stacks only; deliberately not in the migrate workflow's expected list until approved |
 
 **Against a hosted project**, using the [Supabase CLI](https://supabase.com/docs/guides/local-development/cli/getting-started)
 (already a devDependency — run via `npx supabase`):
@@ -114,13 +115,13 @@ RLS is enabled on every table in `public`. The short version (full detail
 is in each migration's comments):
 
 - **Anonymous/authenticated-non-admin**: can read only `status = 'published'`
-  Analyses and Case Studies (and their slides/tags, via joins that are
+  Analyses, Articles (migration 10) and Case Studies (and their slides/tags, via joins that are
   independently policy-checked so a draft can't leak through a join — see
   `20261003000006_content_tags.sql`). Cannot read `profiles` (other than
   their own row) or `orders` at all. Cannot write anything.
 - **Admin** (`public.profiles.role = 'admin'`, checked via the
   `public.is_admin()` SECURITY DEFINER helper): full read/write on
-  Analyses, Case Studies, slides, tags; read + update (not delete) on
+  Analyses, Articles, Case Studies, slides, tags; read + update (not delete) on
   Orders; full Storage access to the `editorial-media` bucket.
 - **Orders have no public INSERT policy at all.** MKTBD_SPEC.md section 9
   asks for a controlled server-side mutation boundary for public order
@@ -156,7 +157,12 @@ guessed; slide order lives in `analysis_slides.position`, not in the name:
 ```
 analysis/{analysis_id}/{uuid}.{jpg|png|webp}
 case-studies/{case_study_id}/cover-{uuid}.{jpg|png|webp}
+articles/{article_id}/cover-{uuid}.{jpg|png|webp}   (migration 10)
+articles/{article_id}/image-{uuid}.{jpg|png|webp}   (migration 10; inline body images)
 ```
+
+Article paths need no Storage policy change: the existing admin-only
+write policies cover the whole bucket.
 
 Uploads go straight from the browser to Storage under the admin's own
 session. After a save or delete succeeds, the CMS removes any object in
