@@ -50,8 +50,10 @@ test("bKash number: Bangladesh mobile conventions normalised to 01XXXXXXXXX", ()
 
 test("transaction ID: trimmed, letters and digits only, 6-30", () => {
   assert.equal(ok(parseTransactionNumber("  9F6A2B7C1D \t")), "9F6A2B7C1D");
-  assert.equal(ok(parseTransactionNumber("abc123")), "abc123", "stored as entered");
-  for (const bad of ["", "   ", "ABC12", "9F6A 2B7C1D", "9F6A-2B7C1D", "<script>", "%_%_%_", "A".repeat(31)])
+  assert.equal(ok(parseTransactionNumber("abc123")), "ABC123", "upper-cased, like the unique index");
+  assert.equal(ok(parseTransactionNumber(" 9f6A2b7C1d ")), "9F6A2B7C1D");
+  assert.equal(ok(parseTransactionNumber("৯F৬A২B৭C১D")), "9F6A2B7C1D", "Bangla digits");
+  for (const bad of ["", "   ", "ABC12", "9F6A 2B7C1D", "9F6A-2B7C1D", "<script>", "%_%_%_", "A".repeat(31), "abcﬁ12", "ÄBC123"])
     assert.equal(parseTransactionNumber(bad).ok, false, bad);
 });
 

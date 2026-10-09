@@ -7,10 +7,11 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "dry-run: validate and show the migration plan only. apply: re-run every check, then push."
+        description: "preflight: read-only aggregate check of existing data for the pending migration. dry-run: validate and show the migration plan only. apply: re-run every check, then push."
         required: true
         type: choice
         options:
+          - preflight
           - dry-run
           - apply
 
@@ -40,18 +41,26 @@ jobs:
         20261003000008_storage.sql
         20261004000009_storage_restrict_listing.sql
         20261008000010_articles.sql
-      # Migrations 1-9 are already recorded remotely, so the push plan must
+        20261009000011_order_hardening.sql
+      # Migrations 1-10 are already recorded remotely, so the push plan must
       # contain only these.
       PENDING_MIGRATIONS: |
-        20261008000010_articles.sql
+        20261009000011_order_hardening.sql
+      # Read-only, aggregate-only data check for the pending migration. The
+      # file must match this reviewed SHA-256 exactly; changing the query
+      # means reviewing it and updating the hash here in the same change.
+      PREFLIGHT_SQL: supabase/checks/20261009000011_order_hardening_preflight.sql
+      PREFLIGHT_SHA256: d05c1d0326ed1772a4acd9d9c780e88bc14c006f7e73c21319c75859c9c1ad61
+      # Counts that must all be 0 before the migration may be applied.
+      PREFLIGHT_BLOCKING: duplicate_transaction_groups orders_with_duplicate_transaction customer_name_over_120 customer_email_over_254 bkash_number_over_32 transaction_number_over_40
     steps:
       - name: Validate mode
         env:
           MODE: ${{ inputs.mode }}
         run: |
           case "$MODE" in
-            dry-run|apply) echo "Mode: $MODE" ;;
-            *) echo "::error::Mode must be \"dry-run\" or \"apply\"."; exit 1 ;;
+            preflight|dry-run|apply) echo "Mode: $MODE" ;;
+            *) echo "::error::Mode must be \"preflight\", \"dry-run\" or \"apply\"."; exit 1 ;;
           esac
 
       - name: Check out repository
@@ -65,11 +74,34 @@ jobs:
           expected="$(printf '%s' "$EXPECTED_MIGRATIONS" | sed '/^$/d' | LC_ALL=C sort)"
           actual="$(find supabase/migrations -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)"
           if [ "$expected" != "$actual" ]; then
-            echo "::error::supabase/migrations does not contain exactly the 10 expected migration files."
+            echo "::error::supabase/migrations does not contain exactly the 11 expected migration files."
             diff <(echo "$expected") <(echo "$actual") || true
             exit 1
           fi
-          echo "Migration directory matches the expected 10 files."
+          echo "Migration directory matches the expected 11 files."
+
+      - name: Verify the preflight query is the reviewed, single read-only SELECT
+        if: inputs.mode == 'preflight'
+        run: |
+          set -euo pipefail
+          echo "$PREFLIGHT_SHA256  $PREFLIGHT_SQL" | sha256sum --check --strict -
+          # Comments removed, whitespace collapsed, lower-case.
+          body="$(sed -e 's/--.*$//' "$PREFLIGHT_SQL" | tr '\n' ' ' | tr -s ' ' | tr '[:upper:]' '[:lower:]')"
+          case "$body" in
+            " with "*|"with "*|" select "*|"select "*) ;;
+            *) echo "::error::Preflight must start with SELECT or WITH."; exit 1 ;;
+          esac
+          if [ "$(printf '%s' "$body" | tr -cd ';' | wc -c)" -ne 1 ] || ! printf '%s' "$body" | grep -qE ';[[:space:]]*$'; then
+            echo "::error::Preflight must be exactly one statement."; exit 1
+          fi
+          if printf '%s' "$body" | grep -qwE 'insert|update|delete|merge|alter|drop|create|grant|revoke|truncate|copy|call|do|set|reset|lock|vacuum|analyze|comment|security|execute|prepare|listen|notify|begin|commit|rollback|into|share|nowait'; then
+            echo "::error::Preflight contains a non-read-only keyword."; exit 1
+          fi
+          # Functions with side effects (sequences, sessions, locks, files, remote calls, settings).
+          if printf '%s' "$body" | grep -qE '(nextval|setval|set_config|pg_terminate_backend|pg_cancel_backend|pg_advisory|pg_sleep|pg_read|pg_write|pg_file|pg_reload|pg_switch|pg_create|pg_drop|pg_promote|lo_[a-z]+|dblink|http_[a-z]+|net\.)[[:space:]]*\('; then
+            echo "::error::Preflight calls a function with side effects."; exit 1
+          fi
+          echo "Preflight query is a single read-only SELECT."
 
       - name: Set up Supabase CLI
         uses: supabase/setup-cli@1dedf2c611547ede7232d26866dd3c56ab903bbb # v1.7.3
@@ -79,10 +111,28 @@ jobs:
       - name: Link Supabase project
         run: supabase link --project-ref "$SUPABASE_PROJECT_ID"
 
+      - name: Run read-only preflight (aggregate counts only)
+        if: inputs.mode == 'preflight'
+        run: |
+          set -euo pipefail
+          # Aggregate counts only (no row data); stderr carries just CLI progress.
+          supabase db query --linked --output-format json --file "$PREFLIGHT_SQL" > "$RUNNER_TEMP/preflight.json"
+          jq '.rows' "$RUNNER_TEMP/preflight.json"
+          # Fail closed: an unexpected result shape, or any blocking count above 0, fails the job.
+          blocked=0
+          for key in $PREFLIGHT_BLOCKING; do
+            value="$(jq -er --arg k "$key" '.rows | if length == 1 then .[0][$k] else error("expected one row") end | tonumber' "$RUNNER_TEMP/preflight.json")"
+            if [ "$value" != "0" ]; then echo "::error::Preflight: $key = $value (must be 0). Do not apply the migration."; blocked=1; fi
+          done
+          if [ "$blocked" -ne 0 ]; then exit 1; fi
+          echo "Preflight passed: no conflicting orders. Nothing was changed and no migration was pushed."
+
       - name: Show migration history before push
+        if: inputs.mode != 'preflight'
         run: supabase migration list --linked
 
       - name: Dry run and verify the migration plan
+        if: inputs.mode != 'preflight'
         run: |
           set -euo pipefail
           supabase db push --linked --dry-run 2>&1 | tee "$RUNNER_TEMP/dry-run.log"

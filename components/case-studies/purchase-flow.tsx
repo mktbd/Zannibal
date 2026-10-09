@@ -202,6 +202,17 @@ export function PurchaseFlow({
         setUnavailable(true);
       } else if (code === "unavailable") {
         setFormError("Online ordering isn’t available right now. Please try again later.");
+      } else if (code === "rate_limited") {
+        const minutes = Math.max(1, Math.ceil(Number(data?.retryAfterSeconds) / 60) || 60);
+        setFormError(
+          `Too many orders are being submitted right now. Please wait ${
+            minutes === 1 ? "a minute" : `about ${minutes} minutes`
+          } and try again${contactEmail ? `, or contact ${contactEmail}` : ""}.`,
+        );
+      } else if (code === "temporarily_unavailable") {
+        setFormError(
+          "Your order couldn’t be submitted just now. Please try again in a few minutes — sending the same details again won’t create a second order.",
+        );
       } else {
         setFormError("Your order couldn’t be submitted. Please try again in a moment.");
       }

@@ -748,12 +748,14 @@ the 4D note that the Buy CTA is non-transactional.
     Fulfilled or Invalid, even an exact repeat is rejected (409
     `{"error":"duplicate_transaction"}` only -- no order number, status,
     Case Study or customer data).
-  - *Enforcement*: application code only (`lib/data/orders.ts`: lookup,
-    then insert). The database has no unique constraint or index on
-    `bkash_transaction_number` (migration 7).
-  - *Remaining race*: the lookup and the insert are separate steps, so
-    two requests carrying the same Transaction ID that both pass the
-    lookup before either inserts can create two orders. The in-memory
+  - *Enforcement*: since Stage 5E-A, by the database -- a unique index on
+    `upper(btrim(bkash_transaction_number))` (migration 11) -- with the
+    application lookup giving the friendly answer first. See "Payment
+    security (Stage 5E-A)" below. (Originally application code only.)
+  - *Race (closed in 5E-A by the unique index)*: the lookup and the
+    insert are separate steps, so two requests carrying the same
+    Transaction ID that both passed the lookup before either inserted
+    could create two orders. The in-memory
     guard only merges identical requests (same Case Study, Transaction
     ID and email) inside one server instance; it does not cover
     different server instances, or a different email/Case Study with the
@@ -766,8 +768,8 @@ the 4D note that the Buy CTA is non-transactional.
     a customer who paid once for two Case Studies, or whose ID was
     mistakenly claimed by someone else's submission, contacts mktbd, and
     the admin resolves it.
-  - **PRE-PRODUCTION HARDENING / LAUNCH BLOCKER (needs an explicitly
-    approved future migration; not created)**: a migration adding a unique index such as
+  - **PRE-PRODUCTION HARDENING / LAUNCH BLOCKER -- implemented in Stage
+    5E-A as migration 11 (not yet applied to production)**: a migration adding a unique index such as
     `create unique index orders_bkash_transaction_number_key on
     public.orders (upper(btrim(bkash_transaction_number)));` (production
     has no orders, so no existing data conflicts), with the endpoint
@@ -807,17 +809,192 @@ the 4D note that the Buy CTA is non-transactional.
   endpoint is POST-only and creates Pending orders only). The service-role
   key is used only in `lib/data/orders.ts` (server-only), never in client
   bundles (checked).
-- **Rate limiting**: none in V1. A per-instance in-memory limiter would
-  be weak on serverless hosting and real limiting needs shared state
-  (e.g. Vercel WAF/rate-limit rules or a KV store). **Launch TODO:**
-  configure platform rate limiting for `POST /api/orders`. No CAPTCHA.
+- **Rate limiting**: none in 4E (a per-instance in-memory limiter would be
+  weak on serverless hosting). Added in Stage 5E-A with shared state in
+  Postgres -- see "Payment security (Stage 5E-A)" below. No CAPTCHA.
 - **Responsive / accessibility**: tested at 320-1440; one H1, h2 steps,
   ordered instructions read in order, visible labels and hints, 48px
   inputs and button, live "Submitting..." status, `aria-busy`, focus
   management, no colour-only errors, reduced motion honoured.
 - **Deferred**: payment gateway, automatic verification, emails
   (confirmation or fulfilment), PDF delivery, customer accounts, order
-  lookup, refunds, rate limiting (above).
+  lookup, refunds.
+
+### Payment security (Stage 5E-A)
+
+Hardening of the manual bKash flow. The business model, the purchase page
+and the admin workflow are unchanged: an order is still recorded as
+Pending and verified by hand.
+
+**Audit (before 5E-A).** No critical issue and no order-data exposure.
+High: duplicate Transaction IDs possible under concurrency (application
+check only); no rate limiting on `POST /api/orders`. Medium: the admin
+UPDATE policy allowed every column (an admin session could rewrite price/
+title snapshots or customer fields over the REST API); the database did
+not enforce field lengths; Transaction IDs stored as typed. Low:
+`anon`/`authenticated` held unused table privileges on `orders` (INSERT,
+DELETE, TRUNCATE...; blocked by RLS / not reachable through the REST API);
+order numbers are sequential (reveal volume; display-only, no access);
+no status-transition rules or change history (operational, deferred).
+Confirmed sound: server-derived price/title/status (the client's price is
+only compared, 409 `price_changed` on mismatch), no public order read or
+write path, responses carry only number/title/amount/status, logs carry
+error codes only, POST-only same-origin endpoint with a 4 KB body cap.
+
+**Transaction ID uniqueness (migration 11).**
+- Unique index `orders_bkash_transaction_number_key` on
+  `upper(btrim(bkash_transaction_number))`, across every status. New
+  orders store the ID trimmed and upper-cased (`lib/order-input.ts`;
+  Bangla digits converted, ASCII letters/digits only, 6-30); existing
+  rows are not rewritten -- the index compares them normalised.
+- `lib/data/orders.ts` still looks the ID up first (resubmission of a
+  still-Pending order -> the same order, 200; any other reuse -> 409
+  `duplicate_transaction`). When two submissions race past the lookup,
+  the losing INSERT fails on the index (23505) and gets exactly the same
+  answer, so the outcome never depends on timing or server instance.
+- Verified locally: 20 simultaneous submissions of one ID from different
+  customers across two server instances -> 1 order, 19
+  `duplicate_transaction`; 10 simultaneous identical submissions -> 1
+  order, one order number for every reply; case/whitespace variants ->
+  1 order.
+
+**Rate limiting.**
+- Store: Postgres (the existing Supabase project) -- table
+  `order_rate_limits` and function `consume_order_rate_limit()` (migration
+  11). No new provider, account or cost; works across every serverless
+  instance.
+- Limits: **5 submissions per client IP per hour** and a **global ceiling
+  of 100 per hour** (sliding window over one-hour fixed windows: current
+  count + previous count weighted by its remaining overlap). Every
+  well-formed submission counts (valid or not), checked before validation.
+  A request refused by its client limit does not use the global
+  allowance; counters are capped at limit + 1 so a blocked client recovers
+  as the window slides.
+- Atomic: each counter is one `INSERT ... ON CONFLICT DO UPDATE`, so
+  simultaneous requests are serialised per bucket -- verified locally: 100
+  simultaneous calls for one client with limit 5 -> exactly 5 allowed; 60
+  clients against a global limit of 20 -> exactly 20.
+- Over the limit: **429** `{"error":"rate_limited","retryAfterSeconds":n}`
+  with `Retry-After` (approximate: until the current window ends). The
+  form shows "Too many orders are being submitted right now. Please wait
+  about N minutes and try again, or contact ...".
+- **Fails closed**: if the check fails or takes longer than 3 s (database
+  error, `lock_timeout` 2 s inside the function, missing service-role
+  key), the endpoint returns **503** `{"error":"temporarily_unavailable"}`
+  with `Retry-After: 60` and creates no order. The form says "Your order
+  couldn't be submitted just now. Please try again in a few minutes --
+  sending the same details again won't create a second order." Logs record
+  only the error code.
+- Client identity: on Vercel (`VERCEL=1`) `X-Real-IP` / `X-Forwarded-For`,
+  which the platform overwrites with the connecting address. Elsewhere
+  these headers are client-controlled, so they are used only when
+  `ORDER_RATE_LIMIT_TRUST_PROXY=true` (set it only behind a proxy that
+  overwrites them); otherwise all requests share one bucket (strict, never
+  bypassable). IPv6 clients are limited per /64.
+- Privacy: only `HMAC-SHA256(client address)` is stored (key derived from
+  the service-role key with a fixed purpose label), as `ip:<64 hex>`; raw
+  IPs are never stored or logged. Rows older than the previous window are
+  deleted by the function itself (whenever a client starts a new window),
+  so the table holds about two hours of counters at most. Rotating the
+  service-role key only resets the counters.
+- Access: RLS on with no policies, and all table privileges revoked from
+  `anon`, `authenticated` and `service_role`; the function is
+  `SECURITY DEFINER` (`search_path` empty), executable by `service_role`
+  only (Supabase's default EXECUTE grant to `anon`/`authenticated` is
+  revoked), validates its arguments, and only ever increments counters.
+  Verified: anon and signed-in users get 401/403 on the function and on
+  any read/write/delete of the table.
+- Configuration (optional, server-only): `ORDER_RATE_LIMIT_PER_IP`
+  (default 5, 1-10000), `ORDER_RATE_LIMIT_GLOBAL` (default 100,
+  1-1000000), `ORDER_RATE_LIMIT_TRUST_PROXY` (off-Vercel only). Invalid
+  values fall back to the defaults (logged without the value).
+- Cost: one small function call (two upserts, two indexed reads) per order
+  submission, plus a periodic small delete; negligible for this site's
+  volume, within the existing Supabase plan. Each blocked request still
+  costs one database call -- for a large-scale flood, add a Vercel
+  Firewall rate-limit rule in front (plan-dependent; not configured).
+
+**Order data and permissions (migration 11).** `authenticated` may update
+only the `status` column of `orders` (the CMS's only order mutation); the
+`orders_update_admin` policy still decides who. Unused INSERT, DELETE,
+TRUNCATE, REFERENCES and TRIGGER privileges for `anon`/`authenticated`
+are revoked; SELECT stays (filtered by `orders_select_admin`). Database
+length limits match the form: name 120, email 254, bKash number 32,
+Transaction ID 40 (format stays the API's job: older test fixtures and
+the admin display legitimately hold other formats).
+
+**Operational risk of the global limit.** The global ceiling (default 100
+submissions per hour, all clients together) caps how much an attacker
+using many IPs can write into the Orders queue -- but once it is reached,
+**every** customer is refused (429) until the sliding window lets
+submissions through again, typically within the hour. Concretely: about
+20 IPs sending 5 junk submissions each can fill the hour's allowance. The
+risk is sharper than for most forms because a customer has usually
+*already paid* by bKash before submitting: they see "Too many orders are
+being submitted right now. Please wait about N minutes and try again, or
+contact ..." -- their payment is not lost, and resubmitting later is safe
+(it cannot create a second order), but it is a poor experience and may
+generate support requests. Junk submissions that get through still create
+Pending orders (at most the global ceiling per hour), which the admin
+marks Invalid.
+- *Detection*: 429s are not logged (to avoid logging per-client data);
+  check the counters instead -- in the Supabase SQL editor,
+  `select window_start, hits from public.order_rate_limits where bucket =
+  'global' order by window_start desc;` (a value at the ceiling + 1 means
+  it was reached) -- together with a sudden burst of Pending orders.
+- *Response*: raise `ORDER_RATE_LIMIT_GLOBAL` in Vercel and redeploy (env
+  changes apply to new deployments), and/or add a Vercel Firewall rule;
+  clearing the current global counter row is a production data change
+  and needs explicit approval. Contact customers who reported a refused
+  submission from the bKash statement.
+- *Sizing*: 100/hour is far above expected launch volume; review it
+  against real order volume after launch rather than lowering it
+  speculatively.
+
+**Remaining risks.** Distributed abuse from many IPs is bounded only by
+the global ceiling (above); a Transaction ID claimed first by
+someone else blocks the real payer until an admin resolves it (manual,
+as before); the 429 `Retry-After` is approximate; there is still no
+CAPTCHA, no status-transition rule and no order change history.
+
+**Production rollout (each step needs its own approval).**
+1. Run the migration workflow in **preflight** mode: a single read-only
+   SELECT (`supabase/checks/20261009000011_order_hardening_preflight.sql`)
+   reporting aggregate counts only -- no Transaction IDs or customer data.
+   The workflow refuses to run it unless the file matches the SHA-256
+   pinned in the workflow (the reviewed query), is one statement, and
+   contains no write keyword or side-effect function (`nextval`,
+   `set_config`, `pg_terminate_backend`, `dblink`, ...); it then **fails
+   the job** if any duplicate-group or over-length count is above 0, or if
+   the result is not the expected single row. Run through the CLI's
+   `db query --linked` (Management API); SQL errors fail the job. (If it
+   fails on counts, do not apply: the migration would fail without
+   changes, but its error message would print the conflicting value in
+   the workflow log.) **The pinned hash does not enforce read-only
+   database permissions.** It only guarantees that the query which runs
+   is byte-for-byte the one that was reviewed; the query runs with the
+   workflow's normal, privileged database access (the Management API path
+   cannot wrap it in a read-only transaction or a read-only role). That it
+   cannot change anything rests on the review of that query -- one plain
+   SELECT, no side-effect functions -- backed by the workflow's keyword
+   guards. Changing the query means reviewing it again and updating the
+   hash in the same change. Anyone able to push to the
+   repository and dispatch the workflow can already apply migrations, so
+   the preflight adds no new capability; consider a GitHub environment
+   with required reviewers for this workflow.
+2. **dry-run**, then **apply** (the workflow now expects migrations 1-11,
+   with 11 pending).
+3. Deploy the application only after migration 11 is applied: the new
+   code fails closed (503) without `consume_order_rate_limit()`.
+4. No new environment variables are required on Vercel
+   (`SUPABASE_SERVICE_ROLE_KEY` and `BKASH_PAYMENT_NUMBER` are already
+   required to take orders); optional limit overrides above.
+5. Rollback: migration 11 is additive. To undo it: drop the function,
+   table and index, drop the four length constraints, and
+   `grant insert, update, delete, truncate, references, trigger on
+   public.orders to anon, authenticated` (the previous defaults) -- but
+   the application must be rolled back first, since the new code requires
+   the function (fails closed without it).
 
 ---
 
@@ -1247,6 +1424,12 @@ lib/
                               validation (shared by the form and the API)
   order-reuse.ts             Transaction ID reuse rule (resubmission vs
                               duplicate), pure + unit-tested
+  order-rate-limit-core.ts   Order rate limit: trusted-IP normalisation
+                              (IPv6 /64), keyed hashing, limit settings
+                              (pure, unit-tested)
+  order-rate-limit.ts        Order rate limit: calls
+                              consume_order_rate_limit() (server-only,
+                              fails closed)
   payment.ts                 BKASH_PAYMENT_NUMBER (server-only config)
   search.ts                  Literal ILIKE helpers (likePattern, ilikeAnyFilter)
   data/
@@ -1672,7 +1855,8 @@ run in production), and no patched release exists in range; the only
 offered "fix" is a breaking downgrade of `eslint-config-next`, so it is not
 applied. `npm audit --omit=dev`: 0 vulnerabilities.
 
-**Payment boundary -- notes for Stage 5E** (no change made in 5D):
+**Payment boundary -- notes for Stage 5E** (no change made in 5D;
+addressed in Stage 5E-A, section 7 "Payment security (Stage 5E-A)"):
 - The bKash Transaction ID is checked for duplicates in application code
   only; two simultaneous submissions could both pass. Add a database
   unique index on the normalised Transaction ID (migration).
@@ -2343,3 +2527,27 @@ domain for `metadataBase` are still to be provided.
   keyboard, and slightly larger padding around "Remove image").
 - Notes for Stage 5E: Transaction ID uniqueness in the database, rate
   limiting on order submission.
+
+### Stage 5E-A — Payment security hardening (this task)
+- Migration `supabase/migrations/20261009000011_order_hardening.sql`
+  (additive): unique index on the normalised bKash Transaction ID, length
+  constraints, status-only update privilege for signed-in users, unused
+  `orders` privileges revoked, `order_rate_limits` table and
+  `consume_order_rate_limit()` (service role only). Applied to the local
+  stack only; **not applied to production** (rollout steps in section 7,
+  "Payment security (Stage 5E-A)").
+- `POST /api/orders`: shared rate limit (5 per client IP per hour, global
+  100 per hour; 429), fail closed (503), unique-violation handling;
+  Transaction IDs stored upper-case. Purchase form: messages for 429 and
+  503. No change to the purchase page layout, the admin workflow or the
+  business model.
+- Migration workflow: new read-only **preflight** mode (pinned query
+  hash, single-SELECT and side-effect guards, fails on conflicts) and the
+  expected file list extended to migration 11 (pending).
+- Verification used a separate, disposable local Supabase stack
+  (`mktbd-qa`, its own containers and volumes, migrations 1-11 applied by
+  the CLI) for the destructive regression suites; every reset/seed/test
+  script there refuses to run unless the target database carries a
+  `qa_disposable` marker schema. The development database was not reset
+  (content fingerprint identical before and after).
+- No new dependency or external service.

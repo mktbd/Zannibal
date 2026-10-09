@@ -15,6 +15,13 @@ import { resolveTransactionReuse, type ExistingTransactionOrder } from "@/lib/or
  * operations after validation -- the duplicate-transaction lookup and the
  * INSERT of a Pending order -- because orders deliberately have no public
  * SELECT or INSERT policy. Nothing here ever updates or deletes an order.
+ *
+ * Transaction ID uniqueness is enforced by the database (migration 11:
+ * unique index on upper(btrim(bkash_transaction_number))). The lookup
+ * below gives the friendly answer in the common case; when two submissions
+ * race past it, the losing INSERT hits the index and is resolved the same
+ * way, so the outcome never depends on timing or on which server instance
+ * handled the request.
  */
 
 export interface OrderableCaseStudy {
@@ -56,8 +63,9 @@ const toCreated = (row: ReturnedRow): CreatedOrder => ({
 
 /**
  * Identical submissions that arrive while the first is still being written
- * (double clicks, retries) share one promise in this server instance,
- * so they produce one order and the same answer.
+ * (double clicks, retries) share one promise in this server instance, so
+ * they produce one order and the same answer without a database round
+ * trip. Across instances the unique index decides (see insertOrder).
  */
 const inFlight = new Map<string, Promise<CreateOrderResult>>();
 
@@ -80,25 +88,44 @@ export function createPendingOrder(caseStudy: OrderableCaseStudy, customer: Orde
   return attempt;
 }
 
-async function insertOrder(caseStudy: OrderableCaseStudy, customer: OrderCustomerInput): Promise<CreateOrderResult> {
-  const admin = createAdminClient();
+type Admin = ReturnType<typeof createAdminClient>;
 
+/**
+ * An earlier order with this Transaction ID decides the answer: the same
+ * Pending submission again -> that order; any other use -> rejected.
+ * Null when there is none (or the lookup failed: `failed`).
+ */
+async function resolveExisting(
+  admin: Admin,
+  caseStudy: OrderableCaseStudy,
+  customer: OrderCustomerInput,
+): Promise<CreateOrderResult | null | "failed"> {
   // Transaction IDs are letters and digits only (validated), so an
-  // un-wildcarded ILIKE is an exact, case-insensitive comparison.
-  const { data: existing, error: lookupError } = await admin
+  // un-wildcarded ILIKE is an exact, case-insensitive comparison -- it also
+  // matches orders stored before IDs were upper-cased.
+  const { data: existing, error } = await admin
     .from("orders")
     .select(`case_study_id, customer_email, status, ${RETURNED_COLUMNS}`)
     .ilike("bkash_transaction_number", customer.transactionNumber)
     .order("submitted_at", { ascending: true })
     .limit(10)
     .overrideTypes<(ReturnedRow & ExistingTransactionOrder)[], { merge: false }>();
-  if (lookupError) {
-    console.error(`[orders] duplicate lookup failed (${lookupError.code})`);
-    return { ok: false, reason: "error" };
+  if (error) {
+    console.error(`[orders] duplicate lookup failed (${error.code})`);
+    return "failed";
   }
   const reuse = resolveTransactionReuse(existing, caseStudy.id, customer.email);
   if (reuse.kind === "resubmission") return { ok: true, order: toCreated(reuse.order), replayed: true };
   if (reuse.kind === "reused") return { ok: false, reason: "duplicate_transaction" };
+  return null;
+}
+
+async function insertOrder(caseStudy: OrderableCaseStudy, customer: OrderCustomerInput): Promise<CreateOrderResult> {
+  const admin = createAdminClient();
+
+  const prior = await resolveExisting(admin, caseStudy, customer);
+  if (prior === "failed") return { ok: false, reason: "error" };
+  if (prior) return prior;
 
   // order_number (sequence), submitted_at and updated_at are set by the
   // database; status is always Pending.
@@ -119,6 +146,14 @@ async function insertOrder(caseStudy: OrderableCaseStudy, customer: OrderCustome
   if (error) {
     // 23503: the Case Study was deleted between the read and the insert.
     if (error.code === "23503") return { ok: false, reason: "unavailable" };
+    // 23505 on the Transaction ID index: a simultaneous submission with the
+    // same ID was inserted first. Answer as if it had been there already.
+    if (error.code === "23505" && error.message.includes("orders_bkash_transaction_number_key")) {
+      const winner = await resolveExisting(admin, caseStudy, customer);
+      if (winner && winner !== "failed") return winner;
+      // Not visible yet or the lookup failed: still never a second order.
+      return winner === "failed" ? { ok: false, reason: "error" } : { ok: false, reason: "duplicate_transaction" };
+    }
     console.error(`[orders] insert failed (${error.code})`);
     return { ok: false, reason: "error" };
   }

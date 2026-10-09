@@ -89,17 +89,22 @@ export function parseBkashNumber(raw: string): Result<string> {
 }
 
 /**
- * The bKash Transaction ID, trimmed. Letters and digits only (6-30), as
- * shown in the bKash app and confirmation SMS; stored as entered. This
- * only records what the customer submitted -- it does not check that the
+ * The bKash Transaction ID, normalised: trimmed, Bangla digits as ASCII,
+ * letters upper-case (bKash shows IDs in capitals; Stage 5E-A). Letters and
+ * digits only (6-30), as shown in the bKash app and confirmation SMS. The
+ * database's unique index compares IDs the same way (trimmed, upper-case),
+ * so "9f6a2b7c1d" and " 9F6A2B7C1D " are one Transaction ID. This only
+ * records what the customer submitted -- it does not check that the
  * transaction exists.
  */
 export function parseTransactionNumber(raw: string): Result<string> {
   const value = asciiDigits(raw.trim());
   if (value === "") return { ok: false, error: "Enter the bKash Transaction ID." };
+  // Checked before upper-casing, so only ASCII letters qualify ("ﬁ" would
+  // otherwise upper-case to "FI").
   if (value.length > ORDER_FIELD_LIMITS.transactionNumber || !/^[A-Za-z0-9]{6,30}$/.test(value))
     return { ok: false, error: "Enter the Transaction ID exactly as shown by bKash (letters and numbers only)." };
-  return { ok: true, value };
+  return { ok: true, value: value.toUpperCase() };
 }
 
 const PARSERS: Record<OrderField, (raw: string) => Result<string>> = {

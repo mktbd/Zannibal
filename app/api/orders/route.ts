@@ -1,11 +1,13 @@
 import { getOrderableCaseStudy, createPendingOrder } from "@/lib/data/orders";
 import { getBkashPaymentNumber } from "@/lib/payment";
 import { MAX_ORDER_BODY_BYTES, parseOrderRequest, samePrice } from "@/lib/order-input";
+import { consumeOrderRateLimit } from "@/lib/order-rate-limit";
 
 export const dynamic = "force-dynamic";
 
 const NO_STORE = { "Cache-Control": "no-store" };
-const reply = (status: number, body: Record<string, unknown>) => Response.json(body, { status, headers: NO_STORE });
+const reply = (status: number, body: Record<string, unknown>, headers: Record<string, string> = {}) =>
+  Response.json(body, { status, headers: { ...NO_STORE, ...headers } });
 
 /**
  * POST /api/orders -- the site's only public write: record a manual bKash
@@ -17,6 +19,12 @@ const reply = (status: number, body: Record<string, unknown>) => Response.json(b
  * price snapshots itself; status is always Pending and the order number
  * comes from the database. The response carries only the order number,
  * the Case Study title and the amount -- never the customer's details.
+ *
+ * Rate limited (Stage 5E-A, lib/order-rate-limit.ts): every well-formed
+ * submission counts against its client IP and a global ceiling, shared
+ * across instances through the database. Over the limit -> 429 with
+ * Retry-After; if the limit can't be checked -> 503, and no order is
+ * created (fail closed).
  *
  * Errors are short codes (plus per-field messages for invalid input) and
  * never echo submitted values, database details or credentials. Nothing
@@ -50,6 +58,15 @@ export async function POST(request: Request) {
   } catch {
     return reply(400, { error: "malformed" });
   }
+
+  const limit = await consumeOrderRateLimit(request.headers);
+  if (limit.kind === "error") return reply(503, { error: "temporarily_unavailable" }, { "Retry-After": "60" });
+  if (limit.kind === "limited")
+    return reply(
+      429,
+      { error: "rate_limited", retryAfterSeconds: limit.retryAfterSeconds },
+      { "Retry-After": String(limit.retryAfterSeconds) },
+    );
 
   const parsed = parseOrderRequest(body);
   if (!parsed.ok) {
