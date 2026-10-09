@@ -115,14 +115,53 @@ jobs:
         if: inputs.mode == 'preflight'
         run: |
           set -euo pipefail
+          result="$RUNNER_TEMP/preflight.json"
           # Aggregate counts only (no row data); stderr carries just CLI progress.
-          supabase db query --linked --output-format json --file "$PREFLIGHT_SQL" > "$RUNNER_TEMP/preflight.json"
-          jq '.rows' "$RUNNER_TEMP/preflight.json"
-          # Fail closed: an unexpected result shape, or any blocking count above 0, fails the job.
+          supabase db query --linked --output-format json --file "$PREFLIGHT_SQL" > "$result"
+          # Strict, fail-closed parsing. Accepted result structures: a top-level
+          # array of rows (linked Management API) or an object whose "rows" is
+          # that array (direct database connection; extra keys "boundary" and
+          # "warning" only). Exactly one row, exactly the expected columns, every
+          # value a non-negative whole number (JSON integer, or a string of
+          # digits, since bigint counts may be serialised as strings). The raw
+          # result is never printed: jq's own messages are discarded and only
+          # our fixed "preflight:" reasons or the validated counts are shown.
+          filter='
+            def expected: ["bkash_number_over_32", "customer_email_over_254", "customer_name_over_120",
+              "duplicate_transaction_groups", "orders_not_yet_normalised", "orders_with_duplicate_transaction",
+              "rate_limit_table_already_present", "total_orders", "transaction_number_over_40",
+              "unique_index_already_present"];
+            def count:
+              if type == "number" and . >= 0 and . == floor and . <= 1000000000000000 then .
+              elif type == "string" and test("^(0|[1-9][0-9]{0,14})$") then tonumber
+              else error("preflight: a count is missing, negative, non-integer or not a number") end;
+            (if type == "array" then .
+             elif type == "object" and has("rows") and ((keys - ["boundary", "rows", "warning"]) == []) then .rows
+             else error("preflight: unexpected result structure") end) as $rows
+            | if ($rows | type) != "array" then error("preflight: unexpected result structure")
+              elif ($rows | length) != 1 then error("preflight: expected exactly one result row")
+              else $rows[0] end
+            | if type != "object" then error("preflight: the result row is not an object")
+              elif (keys != expected) then error("preflight: missing or unexpected columns")
+              else . end
+            | with_entries(.value |= count)
+            | to_entries[] | "\(.key)=\(.value)"'
+          if ! counts="$(jq -r "$filter" "$result" 2>"$RUNNER_TEMP/jq.err")"; then
+            reason="$(grep -oE 'preflight: [a-z ,-]+' "$RUNNER_TEMP/jq.err" | head -n 1 || true)"
+            echo "::error::${reason:-preflight: the result is not valid JSON in an expected structure}. Failing closed; do not apply the migration."
+            exit 1
+          fi
+          if [ -z "$counts" ]; then
+            echo "::error::preflight: the result is empty. Failing closed; do not apply the migration."
+            exit 1
+          fi
+          echo "Preflight counts (aggregate only):"
+          printf '  %s\n' $counts
           blocked=0
           for key in $PREFLIGHT_BLOCKING; do
-            value="$(jq -er --arg k "$key" '.rows | if length == 1 then .[0][$k] else error("expected one row") end | tonumber' "$RUNNER_TEMP/preflight.json")"
-            if [ "$value" != "0" ]; then echo "::error::Preflight: $key = $value (must be 0). Do not apply the migration."; blocked=1; fi
+            value="$(printf '%s\n' $counts | sed -n "s/^${key}=//p")"
+            if [ -z "$value" ]; then echo "::error::preflight: blocking count ${key} is missing. Failing closed."; exit 1; fi
+            if [ "$value" != "0" ]; then echo "::error::Preflight: ${key} = ${value} (must be 0). Do not apply the migration."; blocked=1; fi
           done
           if [ "$blocked" -ne 0 ]; then exit 1; fi
           echo "Preflight passed: no conflicting orders. Nothing was changed and no migration was pushed."
