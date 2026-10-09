@@ -15,7 +15,7 @@ export default async function AdminLoginPage({
   const errorMessage = error ? ERROR_MESSAGES[error] : undefined;
 
   return (
-    <div className="flex min-h-screen items-center justify-center px-6">
+    <main className="flex min-h-screen items-center justify-center px-6">
       <div className="w-full max-w-sm">
         <h1 className="text-xl font-bold">mktbd admin</h1>
         <p className="mt-1 text-sm text-muted">Sign in to continue.</p>
@@ -63,6 +63,6 @@ export default async function AdminLoginPage({
           </button>
         </form>
       </div>
-    </div>
+    </main>
   );
 }

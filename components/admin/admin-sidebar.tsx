@@ -30,7 +30,7 @@ export function AdminSidebar({ email }: { email: string | undefined }) {
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
-    <aside className="admin-sidebar bg-black text-white lg:sticky lg:top-0 lg:flex lg:h-screen lg:w-60 lg:shrink-0 lg:flex-col">
+    <aside aria-label="Admin" className="admin-sidebar bg-black text-white lg:sticky lg:top-0 lg:flex lg:h-screen lg:w-60 lg:shrink-0 lg:flex-col">
       <div className="flex items-center justify-between px-4 py-3 lg:px-5 lg:pb-8 lg:pt-6">
         <Link
           href="/admin"

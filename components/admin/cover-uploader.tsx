@@ -102,6 +102,9 @@ export function CoverUploader({
             id="cover-file"
             type="file"
             accept={MEDIA_ACCEPT}
+            // Opened by the visible Upload/Replace button; labelled, and out of the tab order.
+            aria-label="Choose cover image"
+            tabIndex={-1}
             className="sr-only"
             onChange={(event) => {
               const file = event.target.files?.[0];

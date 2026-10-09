@@ -32,8 +32,9 @@ const reducedMotion = () =>
  * The slides sit in a horizontal scroll-snap track: touch swiping is the
  * browser's own (a vertical gesture can't change slide), arrows/buttons
  * scroll it one slide at a time, and the current slide is read back from
- * the scroll position. Each slide is the original upload, drawn whole
- * (object-contain) in the space left by the controls, never cropped.
+ * the scroll position. Each slide is the upload served through the image
+ * optimizer, drawn whole (object-contain) in the space left by the
+ * controls, never cropped.
  * Slides arrive with `content` -- possibly a moment after the viewer opens.
  */
 export function AnalysisViewer({ content, onClose }: { content: ViewerContent; onClose: () => void }) {
@@ -234,7 +235,12 @@ export function AnalysisViewer({ content, onClose }: { content: ViewerContent; o
         ) : (
           <div
             ref={trackRef}
-            tabIndex={-1}
+            // Focusable scroll region (keyboard users can reach it; ←/→ step
+            // slides), announced as a carousel; each slide is a labelled group.
+            tabIndex={0}
+            role="region"
+            aria-roledescription="carousel"
+            aria-label={`${content.title}, slides`}
             onScroll={onScroll}
             className="flex h-full snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain [scrollbar-width:none] [touch-action:pan-x_pinch-zoom] [&::-webkit-scrollbar]:hidden"
           >
@@ -242,6 +248,9 @@ export function AnalysisViewer({ content, onClose }: { content: ViewerContent; o
               <div
                 key={src + i}
                 className="relative h-full w-full shrink-0 snap-center snap-always"
+                role="group"
+                aria-roledescription="slide"
+                aria-label={`${i + 1} of ${total}`}
                 aria-hidden={i !== index}
               >
                 {failed[i] ? (
@@ -257,10 +266,17 @@ export function AnalysisViewer({ content, onClose }: { content: ViewerContent; o
                       src={src}
                       alt={`Slide ${i + 1} of ${total} — “${content.title}”`}
                       fill
-                      unoptimized
-                      sizes="100vw"
-                      // the current slide and its neighbours load straight away
-                      loading={Math.abs(i - index) <= 1 ? "eager" : "lazy"}
+                      // Served through the image optimizer as WebP at quality 90 (allowlisted in
+                      // next.config.ts), sized to the stage: the full slide stays sharp while a
+                      // multi-MB PNG upload is no longer sent as-is to every phone.
+                      quality={90}
+                      // Width hint: on desktop a slide is at most as wide as the stage is tall
+                      // (square slides); 4:5 portrait slides use less.
+                      sizes="(min-width: 768px) 100vh, 100vw"
+                      // The current slide is preloaded (it is the page's main image); its
+                      // neighbours load straight away, the rest lazily.
+                      preload={i === index}
+                      loading={i === index ? undefined : Math.abs(i - index) <= 1 ? "eager" : "lazy"}
                       draggable={false}
                       onError={() => setFailed((state) => ({ ...state, [i]: true }))}
                       className="object-contain select-none"

@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import { isIndexableDeployment } from "./lib/seo";
+import { securityHeaders } from "./lib/security-headers";
 
 /**
  * Public Storage images (Analysis covers) are served through Next's image
@@ -11,7 +12,12 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ? new URL(process.env.N
 const isLocalSupabase = supabaseUrl !== null && ["localhost", "127.0.0.1", "::1"].includes(supabaseUrl.hostname);
 
 const nextConfig: NextConfig = {
+  // Don't advertise the framework (X-Powered-By: Next.js).
+  poweredByHeader: false,
   images: {
+    // 75: covers and cards (default). 90: Analysis slides in the viewer,
+    // which carry text and charts and must stay crisp.
+    qualities: [75, 90],
     remotePatterns: [
       {
         protocol: "https",
@@ -41,9 +47,19 @@ const nextConfig: NextConfig = {
    */
   async headers() {
     const noindex = [{ key: "X-Robots-Tag", value: "noindex, nofollow" }];
+    // Security headers on every response (lib/security-headers.ts).
+    const security = {
+      source: "/:path*",
+      headers: securityHeaders({
+        supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL,
+        development: process.env.NODE_ENV === "development",
+        productionHttps: process.env.VERCEL_ENV === "production",
+      }),
+    };
     // Vercel preview/development deployments: every response is noindex.
-    if (!isIndexableDeployment(process.env.VERCEL_ENV)) return [{ source: "/:path*", headers: noindex }];
+    if (!isIndexableDeployment(process.env.VERCEL_ENV)) return [security, { source: "/:path*", headers: noindex }];
     return [
+      security,
       { source: "/admin", headers: noindex },
       { source: "/admin/:path*", headers: noindex },
       { source: "/api/:path*", headers: noindex },

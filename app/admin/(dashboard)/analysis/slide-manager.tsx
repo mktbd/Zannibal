@@ -169,6 +169,9 @@ export function SlideManager({
           type="file"
           accept={MEDIA_ACCEPT}
           multiple
+          // Opened by the visible "Add images" button; labelled, and out of the tab order so it isn't a second stop.
+          aria-label="Add slide images"
+          tabIndex={-1}
           className="sr-only"
           onChange={(event) => {
             const files = [...(event.target.files ?? [])];

@@ -379,7 +379,8 @@ Implemented in `app/(public)/analysis/*`, `components/analysis/*`,
   cards visible, dimmed, until its results arrive.
 - **Viewer**: a native modal `<dialog>` over the archive (archive kept in
   place, page scroll locked without layout shift), near-black backdrop.
-  Slides are the original uploads (`next/image` unoptimized) drawn whole
+  Slides are the uploads served through the Next.js image optimizer (WebP,
+  quality 90, sized to the stage -- Stage 5D; originally unoptimized) drawn whole
   with `object-fit: contain` in the space left by the controls; no caption
   or metadata. Framing: on desktop the slide sits within deliberate margins
   (80px above, 48px below, side gutters holding the arrows -- ~86% of the
@@ -1471,6 +1472,233 @@ and sitemap submission happen at launch; Product rich results may want
 `availability`, which is not stated because purchase availability depends
 on the manual bKash setup (deliberately not stated).
 
+### Performance, accessibility and security (Stage 5D)
+
+Audit of the public site, the Analysis viewer and the Admin CMS, with the
+fixes made and what remains. All performance numbers below are
+**laboratory measurements** on a local production build (`next build` +
+`next start`) against the local Supabase stack, seeded with realistic image
+sizes (2400×1600 1.6 MB JPEG covers, 1080×1350 2.3 MB PNG slides,
+2000×1250 3.4 MB PNG inline images). They are not field data (no CrUX/RUM
+exists before launch); re-measure on the production host after launch.
+They demonstrate substantially smaller transfers (the heaviest pages drop
+from ~7 MB to ~0.3-1.6 MB), but **real-user LCP improvements remain
+unverified until measured in production** (field data from real devices
+and networks, e.g. Vercel Speed Insights or CrUX once available).
+
+**Findings (ranked).** No critical finding.
+- *High* -- original uploads sent to browsers unchanged: an Analysis page
+  transferred ~7 MB on mobile (every slide as its full PNG), an Article
+  ~7 MB (inline images). *Fixed*: slides and inline images now go through
+  the Next.js image optimizer (below).
+- *High* -- no HTTP security headers (no CSP, framing protection, nosniff,
+  referrer or permissions policy). *Fixed* (below).
+- *High* -- viewer track not keyboard-focusable and slides not exposed as
+  slides. *Fixed*: the scroll track is a focusable `region` announced as a
+  carousel ("<title>, slides"), each slide a `group` "n of total"; the
+  existing live region still announces "Slide n of total".
+- *High* (axe "critical") -- unlabelled Admin file inputs (cover upload,
+  Analysis slides). *Fixed*: labelled, and removed from the tab order (the
+  visible button opens them, so they were a duplicate, invisible tab stop).
+- *Medium* -- editor toolbar buttons whose accessible name did not contain
+  their visible text (WCAG 2.5.3 Label in Name): "H2", "H3", "• List",
+  "1. List", "“ Quote". *Fixed*: the visible text is now the name, with a
+  screen-reader suffix ("H2 heading", "List (bulleted)", …).
+- *Medium* -- Admin login had no `main` landmark, and the Admin sidebar
+  was an unnamed `complementary` landmark. *Fixed* (`<main>`; sidebar
+  named "Admin").
+- *Medium* -- "Remove image" in the editor was below the 24×24 px minimum
+  target size (WCAG 2.5.8). *Fixed* (padding; visually the same link).
+- *Medium* -- `npm audit`: `sharp` and `source-map-js` advisories. *Fixed*
+  with in-range updates (sharp 0.35.5, source-map-js 1.2.2; lockfile only).
+- *Low* -- `X-Powered-By: Next.js` header. *Fixed* (`poweredByHeader:
+  false`).
+- *Low, open* -- no favicon, so every page logs a 404 for `/favicon.ico`
+  (Lighthouse best-practices 96). Needs the final logo (FINAL MKTBD LOGO
+  ASSET REQUIRED).
+- *Low, open* -- inline Article images have no stored dimensions, so the
+  browser cannot reserve their height before they load. Measured CLS is 0
+  (they are below the fold and lazy), so not worth a migration now.
+- *Low, open* -- the image optimizer's first request for each image/size is
+  slow (it fetches the original from Storage and encodes it); later
+  requests are cached (on Vercel at the edge).
+
+Reviewed with no issue found: RLS on every table and Storage bucket
+(drafts, Orders and unpublished links never readable anonymously;
+`analysis_article_links` rows are public only when the toggle is on and
+both records are published), server-side authorization on every Admin
+mutation, redirects (all targets are fixed internal paths -- no open
+redirect), error responses (generic messages, details only in server
+logs), the service-role key (used only by `lib/data/orders.ts`, behind
+`server-only`), XSS (Article bodies are rendered as React elements from a
+validated document, never as HTML; JSON-LD escapes `<`), uploads (type and
+size checked in the browser, by the Storage bucket and again on save).
+
+**Images.**
+- Analysis slides: `next/image` through the optimizer at quality 90
+  (`images.qualities: [75, 90]` allowlists exactly the two qualities in
+  use; any other `q` is rejected), `sizes="(min-width: 768px) 100vh,
+  100vw"`. The current slide is preloaded, its neighbours load
+  immediately, the rest lazily. A phone gets a ~1200 px wide WebP instead
+  of the 2.3 MB PNG; desktop gets 1080 px (2× screens get the 1920 px
+  candidate, capped at the source width). Text legibility was checked on
+  a slide with 11-15 px type at 390 px/3×, 1440 px/1× and 1440 px/2×: no
+  visible difference from the original (review screenshots, not
+  committed).
+- Article inline images: `getImageProps` gives an optimized responsive
+  `srcset` sized to the reading column (`(min-width: 768px) 704px,
+  calc(100vw - 32px)`), lazy and async-decoded, still laid out at their
+  natural ratio by CSS.
+- Covers already used the optimizer (unchanged).
+
+**Lab measurements** -- Lighthouse 12.8, simulated throttling ("mobile":
+Moto G Power, slow 4G; "desktop" preset), median of 3 runs per route and
+form factor. Before = Stage 5C (`d5f400f`), after = Stage 5D.
+
+| Route | Form | Perf (before → after) | LCP s | Page weight KB | CLS | TBT ms |
+|---|---|---|---|---|---|---|
+| `/` | mobile | 99 → 97 | 2.0 → 2.5 | 331 → 346 | 0.00 → 0.00 | 30 → 68 |
+| `/` | desktop | 100 → 100 | 0.5 → 0.5 | 261 → 276 | 0.00 → 0.00 | 0 → 0 |
+| `/analysis` | mobile | 97 → 95 | 2.6 → 2.9 | 371 → 384 | 0.00 → 0.00 | 30 → 45 |
+| `/analysis` | desktop | 100 → 100 | 0.5 → 0.6 | 322 → 336 | 0.00 → 0.00 | 0 → 0 |
+| `/analysis/[slug]` | mobile | 99 → 93 | 1.9 → 3.2 | 7,080 → 1,110 | 0.00 → 0.00 | 41 → 58 |
+| `/analysis/[slug]` | desktop | 100 → 100 | 0.6 → 0.6 | 4,795 → 1,562 | 0.00 → 0.00 | 0 → 0 |
+| `/articles` | mobile | 99 → 97 | 2.1 → 2.5 | 296 → 312 | 0.00 → 0.00 | 28 → 40 |
+| `/articles` | desktop | 100 → 100 | 0.6 → 0.6 | 304 → 323 | 0.00 → 0.00 | 0 → 0 |
+| `/articles/[slug]` | mobile | 100 → 99 | 1.9 → 2.0 | 6,978 → 328 | 0.00 → 0.00 | 42 → 52 |
+| `/articles/[slug]` | desktop | 100 → 100 | 0.6 → 0.5 | 3,676 → 358 | 0.00 → 0.00 | 0 → 0 |
+| `/case-studies` | mobile | 99 → 98 | 2.2 → 2.4 | 227 → 239 | 0.00 → 0.00 | 28 → 24 |
+| `/case-studies` | desktop | 100 → 100 | 0.5 → 0.5 | 241 → 255 | 0.00 → 0.00 | 0 → 0 |
+| `/case-studies/[slug]` | mobile | 98 → 99 | 2.4 → 2.2 | 248 → 263 | 0.00 → 0.00 | 29 → 46 |
+| `/case-studies/[slug]` | desktop | 100 → 100 | 0.5 → 0.5 | 248 → 263 | 0.00 → 0.00 | 0 → 0 |
+
+Notes: page weight includes response headers, so every page is ~10-15 KB
+heavier from the new security headers over local HTTP/1.1 (HTTP/2 header
+compression on Vercel makes repeated headers nearly free); JavaScript is
+unchanged apart from that header overhead (~171-185 KB transferred).
+Mobile LCP on routes whose code did not change moves between ~1.8 s and
+~2.6 s from run to run on *both* builds: an interleaved re-run (5 runs
+each, baseline and 5D alternating) gave `/` 2.5 → 2.0 s, `/articles`
+2.4 → 2.6 s and `/analysis` 1.9 → 2.6 s, so differences of that size on
+those routes are measurement noise, not a regression. Accessibility 100
+and best practices 96 (the favicon 404) on every route, before and after.
+
+The simulated LCP of `/analysis/[slug]` is misleading: Lighthouse picks the
+archive card behind the viewer's 95%-opaque backdrop as the LCP element,
+and that card now shares the connection with the (much smaller) optimized
+slides. With *applied* throttling (DevTools: 150 ms RTT, 1.6 Mbps, 4× CPU),
+which measures what actually reaches the screen:
+
+| `/analysis/[slug]`, mobile, applied throttling | Before | After |
+|---|---|---|
+| LCP (Lighthouse, DevTools throttling, median of 3) | 39.6 s | 5.8 s |
+| Speed Index | 12.4 s | 3.6 s |
+| Page weight | 7,203 KB | 1,110 KB |
+| First slide fully loaded and decoded (Playwright, 390 px at 3×, median of 3) | 35.9 s | 15.4 s |
+
+The test slide fixtures are deliberately noisy photographic images (worst
+case: ~625 KB as WebP q90); real slides -- flat graphics and text --
+compress far better, so real pages will be lighter still.
+
+**Security headers** (`lib/security-headers.ts`, applied to every route by
+`next.config.ts`; unit-tested in `tests/unit/security-headers.test.mjs`):
+
+| Header | Value |
+|---|---|
+| `Content-Security-Policy` | see below |
+| `X-Content-Type-Options` | `nosniff` |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` |
+| `Permissions-Policy` | `camera=(), microphone=(), geolocation=(), payment=(), usb=(), browsing-topics=()` |
+| `X-Frame-Options` | `DENY` (legacy twin of `frame-ancestors 'none'`) |
+| `Cross-Origin-Opener-Policy` | `same-origin` |
+| `Strict-Transport-Security` | `max-age=63072000` -- Vercel production only; no `includeSubDomains`/`preload` (would bind every mktbd.co subdomain to HTTPS permanently; add deliberately later) |
+
+Production CSP (`<supabase>` = the origin of `NEXT_PUBLIC_SUPABASE_URL`):
+
+```
+default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';
+img-src 'self' data: blob: <supabase>; font-src 'self'; connect-src 'self' <supabase>;
+media-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'self';
+form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests
+```
+
+- `'unsafe-eval'` is never allowed outside `next dev` (React's dev build
+  needs it; the dev server also adds `ws:` for hot reload).
+  `upgrade-insecure-requests` is added only when Supabase is https.
+- **Trade-off -- `script-src 'unsafe-inline'`.** The App Router streams
+  its page payload in inline `<script>` tags. Removing `'unsafe-inline'`
+  requires a per-request nonce (generated in `proxy.ts` and applied by
+  Next to its scripts), which makes **every page dynamically rendered**:
+  no static or ISR pages, no CDN caching of HTML, slower TTFB and higher
+  server cost for a mostly-static publication. That is an architectural
+  change, so it is deliberately not made in 5D. What the current policy
+  still blocks: scripts from any other origin, `eval`, plugins, `<base>`
+  hijacking, posting forms to other origins, framing by other sites, and
+  images/connections to anywhere except this site and Supabase -- so an
+  injected script could not load a payload or exfiltrate data to a third
+  party. **Because `'unsafe-inline'` is allowed, this CSP is not complete
+  protection against injected inline scripts**: an inline `<script>` or
+  event-handler attribute that reached a page would run. Content
+  sanitization, safe rendering and input validation remain essential and
+  are the primary defence -- CMS content is never rendered as HTML (Article
+  bodies are validated documents rendered as React elements, text is
+  always escaped, links are restricted to http/https/mailto, JSON-LD
+  escapes `<`), and every input is validated server-side. Revisit nonces
+  (or hash-based CSP, if Next adds support for static pages) if the site
+  ever renders untrusted HTML.
+- `style-src 'unsafe-inline'`: `next/image` and React set inline styles.
+- JSON-LD (`<script type="application/ld+json">`) is a data block, not
+  executed, so the CSP does not affect it.
+- Verified with no CSP violation (browser `securitypolicyviolation` events
+  and console) on every public page at 1280 and 390 px, client-side
+  navigation, the viewer, the purchase form, Admin login, the Article
+  editor (typing, formatting, links, inline-image upload to Supabase
+  Storage, cover upload with blob preview) and Analysis slide upload.
+
+**Accessibility** (WCAG 2.2 AA; axe-core 4.14 with the WCAG 2.0/2.1/2.2 A
+and AA rules plus best practices, keyboard tests in Playwright): zero
+violations on every public page (1280 and 390 px), the open viewer, 404,
+Admin login, every Admin list/edit page, the editor link box, delete
+confirmations, validation errors, the tag selector listbox and the mobile
+Admin menu. Lighthouse accessibility 100 on all audited routes. Viewer
+keyboard behaviour verified: focus moves into the dialog, Tab stays inside
+it (the slide track is one stop), the archive behind is inert, ←/→ change
+slides with an announcement, Escape closes and returns focus to the card.
+
+**Dependencies.** `npm audit` after the in-range updates: 5 *high*, all one
+chain -- `braces` ≤ 3.0.3 via `eslint-config-next` → `@next/eslint-plugin-next`
+→ `fast-glob` → `micromatch`. Development-only (linting; never bundled or
+run in production), and no patched release exists in range; the only
+offered "fix" is a breaking downgrade of `eslint-config-next`, so it is not
+applied. `npm audit --omit=dev`: 0 vulnerabilities.
+
+**Payment boundary -- notes for Stage 5E** (no change made in 5D):
+- The bKash Transaction ID is checked for duplicates in application code
+  only; two simultaneous submissions could both pass. Add a database
+  unique index on the normalised Transaction ID (migration).
+- `POST /api/orders` has no rate limiting, CAPTCHA or idempotency key; a
+  script could flood the Orders table. Add per-IP rate limiting (e.g.
+  Vercel firewall rules or an edge/KV counter) before launch.
+- The purchase form already prevents double submission in the browser
+  (`submitting` state, `aria-disabled`), and all validation is repeated
+  server-side.
+
+**Regression protection.** `tests/unit/security-headers.test.mjs` pins the
+header set and the CSP (including: no `'unsafe-eval'` in production, HSTS
+only on Vercel production). The local Playwright suites (05A CMS, 05B
+Articles, 05C SEO, 03A-03C Admin, 04B-04F public site) were re-run against
+the CSP-enabled production build.
+
+**Local test data -- destructive scripts.** The regression suites' fixture
+reset scripts (local test harness, not in the repo) **delete the local
+seeded content** -- all Articles, Analyses, Case Studies, Orders, Tags and
+editorial-media Storage records -- before re-seeding fixtures. They run
+against the local Supabase stack only and do not touch the schema,
+migrations, auth users or Docker volumes, but anything created by hand in
+the local database is lost. **Future runs of destructive local test
+scripts require explicit approval** beforehand (they ran during 5D
+verification without separate approval and are disclosed here).
+
 ---
 
 ## 10. Security Rules
@@ -1489,6 +1717,11 @@ information. Security is a first-class requirement, not an afterthought.
 - **Never** expose the Supabase service-role key to the browser
   (`lib/supabase/admin.ts` is guarded with the `server-only` package).
 - Never rely solely on client-side checks for authorization.
+- Every response carries the security headers and Content-Security-Policy
+  from `lib/security-headers.ts` (Stage 5D; trade-offs in section 9,
+  "Performance, accessibility and security"). Keep `'unsafe-eval'` out of
+  production, and never render CMS content as raw HTML -- the CSP allows
+  inline scripts, so it is not the defence against injection.
 
 ---
 
@@ -2091,3 +2324,22 @@ domain for `metadataBase` are still to be provided.
   caption fallback for empty inline-image alt text. Details in section 9,
   "SEO and AI-search discoverability".
 - No migration, layout, typography or content-architecture change.
+
+### Stage 5D — Performance, accessibility & security (this task)
+- Audit and fixes; details, lab measurements and remaining risks in
+  section 9, "Performance, accessibility and security (Stage 5D)".
+- Analysis slides and Article inline images now served through the
+  Next.js image optimizer (WebP; slides at quality 90) instead of the
+  original uploads -- the largest pages drop from ~7 MB to ~0.3-1.1 MB on
+  mobile (lab).
+- Security headers and a Content-Security-Policy on every route
+  (`lib/security-headers.ts`); `X-Powered-By` removed.
+- Viewer track focusable and announced as a carousel; Admin file inputs
+  labelled; editor toolbar names match their visible text; Admin login
+  `main` landmark; "Remove image" target size.
+- In-range dependency updates (`sharp`, `source-map-js`; lockfile only).
+- No migration, data, payment or visible design change (the only visible
+  differences: a focus outline on the slide track when it is reached by
+  keyboard, and slightly larger padding around "Remove image").
+- Notes for Stage 5E: Transaction ID uniqueness in the database, rate
+  limiting on order submission.

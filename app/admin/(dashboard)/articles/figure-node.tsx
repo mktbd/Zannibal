@@ -95,7 +95,7 @@ function FigureView({ node, updateAttributes, deleteNode, selected }: ReactNodeV
         </label>
       </div>
       <div className="mt-2 text-right" contentEditable={false}>
-        <button type="button" onClick={() => deleteNode()} className={`${linkButton} text-red-700`}>
+        <button type="button" onClick={() => deleteNode()} className={`${linkButton} inline-flex min-h-6 items-center px-1 text-red-700`}>
           Remove image
         </button>
       </div>

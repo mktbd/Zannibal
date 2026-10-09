@@ -234,11 +234,11 @@ function Toolbar({
         <ToolButton label="Paragraph" active={state.paragraph} onClick={() => chain().setParagraph().run()}>
           ¶
         </ToolButton>
-        <ToolButton label="Heading 2" active={state.h2} onClick={() => chain().toggleHeading({ level: 2 }).run()}>
-          H2
+        <ToolButton label="Heading 2" named active={state.h2} onClick={() => chain().toggleHeading({ level: 2 }).run()}>
+          H2<span className="sr-only"> heading</span>
         </ToolButton>
-        <ToolButton label="Heading 3" active={state.h3} onClick={() => chain().toggleHeading({ level: 3 }).run()}>
-          H3
+        <ToolButton label="Heading 3" named active={state.h3} onClick={() => chain().toggleHeading({ level: 3 }).run()}>
+          H3<span className="sr-only"> heading</span>
         </ToolButton>
         <Divider />
         <ToolButton label="Bold (Ctrl+B)" active={state.bold} onClick={() => chain().toggleBold().run()}>
@@ -251,14 +251,14 @@ function Toolbar({
           Link
         </ToolButton>
         <Divider />
-        <ToolButton label="Bulleted list" active={state.bulletList} onClick={() => chain().toggleBulletList().run()}>
-          • List
+        <ToolButton label="Bulleted list" named active={state.bulletList} onClick={() => chain().toggleBulletList().run()}>
+          <span aria-hidden="true">•</span> List<span className="sr-only"> (bulleted)</span>
         </ToolButton>
-        <ToolButton label="Numbered list" active={state.orderedList} onClick={() => chain().toggleOrderedList().run()}>
-          1. List
+        <ToolButton label="Numbered list" named active={state.orderedList} onClick={() => chain().toggleOrderedList().run()}>
+          <span aria-hidden="true">1.</span> List<span className="sr-only"> (numbered)</span>
         </ToolButton>
-        <ToolButton label="Quote" active={state.blockquote} onClick={() => chain().toggleBlockquote().run()}>
-          “ Quote
+        <ToolButton label="Quote" named active={state.blockquote} onClick={() => chain().toggleBlockquote().run()}>
+          <span aria-hidden="true">“</span> Quote
         </ToolButton>
         <Divider />
         <input
@@ -374,14 +374,22 @@ function Toolbar({
   );
 }
 
+/**
+ * A toolbar button. `label` is the tooltip. Glyph buttons (¶, B, I, ↶, ↷)
+ * use it as their accessible name; `named` buttons are named by their
+ * visible text (plus screen-reader-only hints), so the spoken name always
+ * contains what is on screen (WCAG 2.5.3 Label in Name).
+ */
 function ToolButton({
   label,
+  named = false,
   active,
   disabled,
   onClick,
   children,
 }: {
   label: string;
+  named?: boolean;
   active?: boolean;
   disabled?: boolean;
   onClick: () => void;
@@ -391,7 +399,7 @@ function ToolButton({
     <button
       type="button"
       title={label}
-      aria-label={label}
+      aria-label={named ? undefined : label}
       aria-pressed={active === undefined ? undefined : active}
       disabled={disabled}
       // Keep the editor's selection while clicking the toolbar.

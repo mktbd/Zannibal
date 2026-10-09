@@ -1,4 +1,5 @@
 import { Fragment, type ReactNode } from "react";
+import { getImageProps } from "next/image";
 import type { ArticleDoc, BlockNode, InlineNode, Mark } from "@/lib/article-body";
 import { mediaPublicUrl } from "@/lib/media";
 
@@ -48,13 +49,32 @@ function renderBlock(node: BlockNode, key: number): ReactNode {
     case "figure":
       return (
         <figure key={key}>
-          {/* eslint-disable-next-line @next/next/no-img-element -- editorial image at its natural ratio; sizes are unknown */}
-          {/* Alt text from the editor; when left empty, the caption describes the image instead. */}
-          <img src={mediaPublicUrl(node.attrs.path)} alt={node.attrs.alt || node.attrs.caption} loading="lazy" decoding="async" />
+          {/* eslint-disable-next-line @next/next/no-img-element, jsx-a11y/alt-text -- optimized responsive <img> (getImageProps) at its natural ratio; alt is in the props */}
+          <img {...inlineImageProps(node.attrs.path, node.attrs.alt || node.attrs.caption)} />
           {node.attrs.caption ? <figcaption>{node.attrs.caption}</figcaption> : null}
         </figure>
       );
   }
+}
+
+/**
+ * Props for an inline Article image: served through the Next.js image
+ * optimizer (WebP, responsive srcset sized to the ≈44rem reading column)
+ * instead of the original upload, lazily loaded. The stored dimensions are
+ * unknown, so it is laid out at its natural ratio by CSS (.article-body
+ * figure img); getImageProps' "fill" positioning style is dropped. Alt
+ * text comes from the editor, falling back to the caption when empty.
+ */
+function inlineImageProps(path: string, alt: string) {
+  const { props } = getImageProps({
+    src: mediaPublicUrl(path),
+    alt,
+    fill: true,
+    sizes: "(min-width: 768px) 704px, calc(100vw - 32px)",
+  });
+  const { style: _fillStyle, ...rest } = props;
+  void _fillStyle;
+  return { ...rest, loading: "lazy" as const, decoding: "async" as const };
 }
 
 function renderInline(content: InlineNode[] | undefined): ReactNode {
