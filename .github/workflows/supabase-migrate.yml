@@ -7,13 +7,14 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "preflight: read-only aggregate check of existing data for the pending migration. dry-run: validate and show the migration plan only. apply: re-run every check, then push."
+        description: "preflight: read-only aggregate check of existing data for the pending migration. dry-run: validate and show the migration plan only. apply: re-run every check, then push. verify: read-only catalog check that the applied migration is in place."
         required: true
         type: choice
         options:
           - preflight
           - dry-run
           - apply
+          - verify
 
 permissions:
   contents: read
@@ -53,14 +54,18 @@ jobs:
       PREFLIGHT_SHA256: d05c1d0326ed1772a4acd9d9c780e88bc14c006f7e73c21319c75859c9c1ad61
       # Counts that must all be 0 before the migration may be applied.
       PREFLIGHT_BLOCKING: duplicate_transaction_groups orders_with_duplicate_transaction customer_name_over_120 customer_email_over_254 bkash_number_over_32 transaction_number_over_40
+      # Read-only post-apply catalog verification (no table rows; booleans
+      # only). Pinned like the preflight: the file must match this SHA-256.
+      VERIFY_SQL: supabase/checks/20261009000011_order_hardening_verify.sql
+      VERIFY_SHA256: d4aa66c2ff0dc78ffbb9d6c2932611a545dca6f6ec6cb5b18922d5193eb67b98
     steps:
       - name: Validate mode
         env:
           MODE: ${{ inputs.mode }}
         run: |
           case "$MODE" in
-            preflight|dry-run|apply) echo "Mode: $MODE" ;;
-            *) echo "::error::Mode must be \"preflight\", \"dry-run\" or \"apply\"."; exit 1 ;;
+            preflight|dry-run|apply|verify) echo "Mode: $MODE" ;;
+            *) echo "::error::Mode must be \"preflight\", \"dry-run\", \"apply\" or \"verify\"."; exit 1 ;;
           esac
 
       - name: Check out repository
@@ -102,6 +107,36 @@ jobs:
             echo "::error::Preflight calls a function with side effects."; exit 1
           fi
           echo "Preflight query is a single read-only SELECT."
+
+      - name: Verify the verification query is the reviewed, single read-only SELECT
+        if: inputs.mode == 'verify'
+        run: |
+          set -euo pipefail
+          echo "$VERIFY_SHA256  $VERIFY_SQL" | sha256sum --check --strict -
+          # Comments and string literals removed (literals such as 'UPDATE' are
+          # privilege names passed to has_*_privilege, never executed), then
+          # whitespace collapsed and lower-cased. Dollar quoting is refused, so
+          # no literal can hide a second statement.
+          body="$(sed -e 's/--.*$//' "$VERIFY_SQL" | tr '\n' ' ' | sed -e "s/'[^']*'//g" | tr -s ' ' | tr '[:upper:]' '[:lower:]')"
+          case "$body" in
+            " with "*|"with "*|" select "*|"select "*) ;;
+            *) echo "::error::Verification must start with SELECT or WITH."; exit 1 ;;
+          esac
+          if printf '%s' "$body" | grep -q '[$]'; then echo "::error::Verification must not use dollar quoting."; exit 1; fi
+          if [ "$(printf '%s' "$body" | tr -cd ';' | wc -c)" -ne 1 ] || ! printf '%s' "$body" | grep -qE ';[[:space:]]*$'; then
+            echo "::error::Verification must be exactly one statement."; exit 1
+          fi
+          if printf '%s' "$body" | grep -qwE 'insert|update|delete|merge|alter|drop|create|grant|revoke|truncate|copy|call|do|set|reset|lock|vacuum|analyze|comment|security|execute|prepare|listen|notify|begin|commit|rollback|into|share|nowait'; then
+            echo "::error::Verification contains a non-read-only keyword."; exit 1
+          fi
+          if printf '%s' "$body" | grep -qE '(nextval|setval|set_config|pg_terminate_backend|pg_cancel_backend|pg_advisory|pg_sleep|pg_read|pg_write|pg_file|pg_reload|pg_switch|pg_create|pg_drop|pg_promote|lo_[a-z]+|dblink|http_[a-z]+|net\.)[[:space:]]*\('; then
+            echo "::error::Verification calls a function with side effects."; exit 1
+          fi
+          # Never reads table rows: no FROM/JOIN on an application schema.
+          if printf '%s' "$body" | grep -qE '(from|join)[[:space:]]+(public|storage|auth)\.'; then
+            echo "::error::Verification must read catalog metadata only."; exit 1
+          fi
+          echo "Verification query is a single read-only, catalog-only SELECT."
 
       - name: Set up Supabase CLI
         uses: supabase/setup-cli@1dedf2c611547ede7232d26866dd3c56ab903bbb # v1.7.3
@@ -166,12 +201,62 @@ jobs:
           if [ "$blocked" -ne 0 ]; then exit 1; fi
           echo "Preflight passed: no conflicting orders. Nothing was changed and no migration was pushed."
 
+      - name: Run read-only verification (catalog booleans only)
+        if: inputs.mode == 'verify'
+        run: |
+          set -euo pipefail
+          result="$RUNNER_TEMP/verify.json"
+          supabase db query --linked --output-format json --file "$VERIFY_SQL" > "$result"
+          # Strict, fail-closed parsing, as for the preflight: a top-level array
+          # of rows or an object whose "rows" is that array; exactly one row;
+          # exactly the expected checks; every value a boolean (JSON true/false,
+          # or the strings "true"/"false"). Only check names and true/false are
+          # printed, never the raw result.
+          filter='
+            def expected: ["migration_11_recorded", "order_length_constraints_validated",
+              "orders_admin_read_privilege_kept", "orders_update_status_only", "orders_write_privileges_revoked",
+              "policy_definitions_expected", "policy_names_expected", "public_tables_expected",
+              "rate_limit_function_definer_empty_path", "rate_limit_function_present",
+              "rate_limit_function_service_role_only", "rate_limit_table_no_client_privileges",
+              "rate_limit_table_no_policies", "rate_limit_table_present", "rate_limit_table_rls_enabled",
+              "rls_enabled_on_all_public_tables", "transaction_index_normalised", "transaction_index_unique_valid"];
+            def flag:
+              if type == "boolean" then .
+              elif . == "true" then true
+              elif . == "false" then false
+              else error("verify: a check is missing, null or not a boolean") end;
+            (if type == "array" then .
+             elif type == "object" and has("rows") and ((keys - ["boundary", "rows", "warning"]) == []) then .rows
+             else error("verify: unexpected result structure") end) as $rows
+            | if ($rows | type) != "array" then error("verify: unexpected result structure")
+              elif ($rows | length) != 1 then error("verify: expected exactly one result row")
+              else $rows[0] end
+            | if type != "object" then error("verify: the result row is not an object")
+              elif (keys != expected) then error("verify: missing or unexpected checks")
+              else . end
+            | with_entries(.value |= flag)
+            | to_entries[] | "\(.key)=\(.value)"'
+          if ! checks="$(jq -r "$filter" "$result" 2>"$RUNNER_TEMP/jq.err")"; then
+            reason="$(grep -oE 'verify: [a-z ,-]+' "$RUNNER_TEMP/jq.err" | head -n 1 || true)"
+            echo "::error::${reason:-verify: the result is not valid JSON in an expected structure}. Failing closed."
+            exit 1
+          fi
+          if [ -z "$checks" ]; then echo "::error::verify: the result is empty. Failing closed."; exit 1; fi
+          echo "Verification checks (catalog only):"
+          printf '  %s\n' $checks
+          failed="$(printf '%s\n' $checks | grep -c '=false$' || true)"
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::verify: ${failed} check(s) failed. The migration is not fully in place."
+            exit 1
+          fi
+          echo "Verification passed: migration 11 is in place. Nothing was changed."
+
       - name: Show migration history before push
-        if: inputs.mode != 'preflight'
+        if: inputs.mode == 'dry-run' || inputs.mode == 'apply'
         run: supabase migration list --linked
 
       - name: Dry run and verify the migration plan
-        if: inputs.mode != 'preflight'
+        if: inputs.mode == 'dry-run' || inputs.mode == 'apply'
         run: |
           set -euo pipefail
           supabase db push --linked --dry-run 2>&1 | tee "$RUNNER_TEMP/dry-run.log"
