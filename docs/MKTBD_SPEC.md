@@ -2583,7 +2583,7 @@ domain for `metadataBase` are still to be provided.
   (content fingerprint identical before and after).
 - No new dependency or external service.
 
-### Stage 5E-B1 — Production verification and documentation (this task)
+### Stage 5E-B1 — Production verification and documentation
 - Read-only post-apply verification for migration 11:
   `supabase/checks/20261009000011_order_hardening_verify.sql` (18
   catalog-only boolean checks) and a `verify` mode in the migration
@@ -2599,3 +2599,47 @@ domain for `metadataBase` are still to be provided.
   caution.
 - Open: Vercel production branch, auto-deployment and the deployed commit
   were not verifiable from this environment.
+
+### Stage 5E-B2A — Cloudflare Workers Free staging preparation (superseded by 5E-B2B)
+- Prepared a Workers Free staging test (vinext; Free CPU/request/size
+  gates). Superseded before any run: the owner moved to Workers Paid.
+  Not committed separately; its still-relevant parts carried into 5E-B2B.
+
+### Stage 5E-B2B — Cloudflare Workers Paid preparation (branch `cloudflare-staging`; this task)
+- Hosting decision: Cloudflare Workers Paid, built with vinext 1.1.0
+  (OpenNext's bundle was too large and its `proxy.ts` support
+  experimental). Production stays on Vercel until separately approved
+  cutover steps. Guide: `docs/CLOUDFLARE_WORKERS.md`.
+- App changes (Vercel production behaviour unchanged, verified):
+  `SITE_ENV` deployment environment (falls back to `VERCEL_ENV`);
+  `DEPLOY_PLATFORM=cloudflare` keys the order rate limit on
+  `CF-Connecting-IP`; non-production deployments accept only the
+  non-payable bKash placeholder `STAGING-NOT-PAYABLE` and show a red
+  staging banner; security and noindex headers also on `/`. Vercel
+  preview deployments now get the banner and the placeholder-only rule.
+- `cloudflare.config.ts`: staging (`mktbd-staging`, workers.dev behind
+  Cloudflare Access) and production (`mktbd`, no URL until a custom domain
+  is approved) targets with build guards on `SITE_ENV` and the Supabase
+  ref versus `PRODUCTION_REF`; CPU cap 1 s; free binding types only.
+- Manual-dispatch workflow `.github/workflows/cloudflare-staging.yml`
+  (migrate-staging, seed-staging, deploy-staging, test-staging,
+  production-build-check) with three staging GitHub environments,
+  content-based isolation gates (`scripts/staging/`), config and size
+  checks before upload, and no production deployment. A unit test pins
+  each job's allowed secrets and forbids inherited or dynamic secret
+  access. The staging workflow reads only the ref-only secret
+  `PRODUCTION_SUPABASE_REF`, never the production workflow's secrets.
+- Access first: a static placeholder Worker (`scripts/staging/placeholder`)
+  claims the staging name; `deploy-staging` uploads the application only
+  after proving Cloudflare Access is enforcing.
+- Production credential isolation: a plan to move the production Supabase
+  secrets into a protected `production` GitHub environment is in
+  `docs/CLOUDFLARE_WORKERS.md` §6a (not executed).
+- Staging acceptance: runtime stability (no 1102/failed outcomes) and
+  full functional/security/freshness checks; CPU and request volume
+  reported for cost planning only.
+- Image optimization: upload-time WebP variants in Supabase Storage,
+  designed in `docs/IMAGE_OPTIMIZATION.md`, not implemented; required
+  before the production cutover, since vinext on Workers serves originals.
+- Not done: nothing pushed, deployed or migrated; no staging project yet;
+  no DNS or production secret changes; purchasing unchanged.
