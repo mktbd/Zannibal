@@ -17,7 +17,7 @@ export interface SecurityHeaderOptions {
   supabaseUrl: string | undefined;
   /** next dev: React needs eval and the dev server uses websockets. */
   development: boolean;
-  /** Vercel production (VERCEL_ENV=production): add HSTS. */
+  /** Production deployment (lib/deployment.ts: SITE_ENV, else VERCEL_ENV): add HSTS. */
   productionHttps: boolean;
 }
 

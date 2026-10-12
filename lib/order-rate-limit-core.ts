@@ -85,6 +85,32 @@ function expandIPv6(address: string): string[] | null {
 /** Key used when no trusted client address is available: one shared bucket. */
 export const UNKNOWN_CLIENT = "unknown";
 
+export interface ClientIpSettings {
+  /** DEPLOY_PLATFORM: "cloudflare" on Cloudflare Workers. */
+  platform: string | undefined;
+  /** VERCEL ("1" on Vercel). */
+  vercel: string | undefined;
+  /** ORDER_RATE_LIMIT_TRUST_PROXY ("true" behind a proxy that overwrites the headers). */
+  trustProxy: string | undefined;
+}
+
+/**
+ * The client address to rate-limit, from the one header the platform
+ * guarantees (Stage 5E-B2A):
+ * - Cloudflare Workers (DEPLOY_PLATFORM=cloudflare): CF-Connecting-IP, set
+ *   by Cloudflare's edge -- a client-sent value is overwritten. Nothing else
+ *   is trusted there (X-Forwarded-For can carry client-supplied entries).
+ * - Vercel (VERCEL=1): X-Real-IP / X-Forwarded-For, overwritten by Vercel.
+ * - Elsewhere only with ORDER_RATE_LIMIT_TRUST_PROXY=true.
+ * Otherwise every request shares UNKNOWN_CLIENT: strict, never bypassable.
+ */
+export function clientIpFromHeaders(get: (name: string) => string | null, settings: ClientIpSettings): string {
+  if (settings.platform === "cloudflare") return normalizeClientIp(get("cf-connecting-ip")) ?? UNKNOWN_CLIENT;
+  if (settings.vercel === "1" || settings.trustProxy === "true")
+    return normalizeClientIp(get("x-real-ip")) ?? normalizeClientIp(get("x-forwarded-for")) ?? UNKNOWN_CLIENT;
+  return UNKNOWN_CLIENT;
+}
+
 /**
  * The stored client identifier: HMAC-SHA256 of the normalised address
  * under a key derived from a server secret (the service-role key, with a

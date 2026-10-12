@@ -1,5 +1,6 @@
 import "server-only";
 import { isIndexableDeployment, parseSiteUrl, type SiteInfo } from "@/lib/seo";
+import { currentDeploymentEnv } from "@/lib/deployment";
 import { SITE, SOCIAL_LINKS } from "@/lib/site";
 
 /**
@@ -11,13 +12,14 @@ import { SITE, SOCIAL_LINKS } from "@/lib/site";
 export const SITE_ORIGIN = parseSiteUrl(process.env.SITE_URL, (message) => console.warn(`[seo] ${message}`));
 
 /**
- * Whether this deployment may be indexed (lib/seo.ts isIndexableDeployment):
- * Vercel production yes; Vercel preview/development no -- enforced three
- * ways: robots.txt disallows everything, every page inherits
+ * Whether this deployment may be indexed (lib/seo.ts isIndexableDeployment)
+ * for the deployment environment from lib/deployment.ts (SITE_ENV, else
+ * VERCEL_ENV): production yes; preview/staging/development no -- enforced
+ * three ways: robots.txt disallows everything, every page inherits
  * <meta name="robots" content="noindex, nofollow"> from the root layout,
  * and next.config.ts adds X-Robots-Tag to every response.
  */
-export const INDEXABLE = isIndexableDeployment(process.env.VERCEL_ENV);
+export const INDEXABLE = isIndexableDeployment(currentDeploymentEnv());
 
 export const SITE_INFO: SiteInfo = {
   origin: SITE_ORIGIN,
