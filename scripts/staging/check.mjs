@@ -7,6 +7,7 @@
 //   --site <base>         tests: the target is behind Cloudflare Access and shows the staging banner and noindex.
 //   --access <base>       deploy: Cloudflare Access is enforcing on the staging origin (before the full app is uploaded).
 //   --env                 any job: no production credential name is present.
+//   --require A,B,...     with any mode: each listed variable must be set and non-empty (names only are printed).
 // Prints the outcome only.
 import { checkAccessEnforced, checkMarkerAnon, checkMarkerDb, checkRefs, checkStagingSite, fail, psql, refuseProductionCredentials } from "./isolation.mjs";
 
@@ -14,6 +15,10 @@ const args = process.argv.slice(2);
 const mode = args.indexOf("--db") >= 0 ? `db:${args[args.indexOf("--db") + 1]}` : ["anon", "site", "access", "env"].find((m) => args.includes(`--${m}`)) ?? "";
 const env = process.env;
 if (!["db:fresh-or-marked", "db:marked", "anon", "site", "access", "env"].includes(mode)) fail("usage: check.mjs --db fresh-or-marked|marked | --anon | --site <base> | --access <base> | --env");
+
+const required = args.indexOf("--require") >= 0 ? String(args[args.indexOf("--require") + 1] || "").split(",").filter(Boolean) : [];
+const missing = required.filter((name) => !/^[A-Z][A-Z0-9_]*$/.test(name) || !(env[name] || "").trim());
+if (missing.length) fail(`required staging settings are missing: ${missing.join(", ")} (configure them in this job's GitHub environment).`);
 
 (async () => {
   refuseProductionCredentials(env);

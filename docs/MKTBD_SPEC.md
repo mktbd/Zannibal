@@ -2633,8 +2633,23 @@ domain for `metadataBase` are still to be provided.
   claims the staging name; `deploy-staging` uploads the application only
   after proving Cloudflare Access is enforcing.
 - Production credential isolation: a plan to move the production Supabase
-  secrets into a protected `production` GitHub environment is in
+  secrets into a protected `supabase-production` GitHub environment is in
   `docs/CLOUDFLARE_WORKERS.md` §6a (not executed).
+
+### Stage 5E-B2C — Workflow registration and credential isolation (prepared; not committed)
+- The staging workflow is dispatched from `main` (where GitHub requires the
+  file) and runs only an approved `cloudflare-staging` revision: an
+  `authorize` job with no secrets checks the event, ref and workflow file,
+  and requires `staging_sha` to equal the repository variable
+  `CLOUDFLARE_STAGING_APPROVED_SHA`, be contained in the branch and carry
+  a byte-identical workflow file. Every job checks out that SHA.
+- Secrets are passed only to the steps that use them (never to dependency
+  installation or tool setup). `PRODUCTION_SUPABASE_REF` moves into the
+  staging environments, now restricted to `main`. Each job fails on
+  missing staging settings. The production build check uses a dummy ref.
+- Prepared but not applied: a `supabase-migrate.yml` patch binding the
+  `supabase-production` environment with a main-only guard, and a
+  minimal main commit adding only the staging workflow file.
 - Staging acceptance: runtime stability (no 1102/failed outcomes) and
   full functional/security/freshness checks; CPU and request volume
   reported for cost planning only.

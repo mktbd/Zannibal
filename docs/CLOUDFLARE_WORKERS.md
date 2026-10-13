@@ -20,7 +20,7 @@ Related: `docs/IMAGE_OPTIMIZATION.md` (upload-time image variants, design),
 
 ```
                         GitHub Actions — .github/workflows/cloudflare-staging.yml
-                        (manual dispatch, branch cloudflare-staging, reviewer approval per job)
+                        (manual dispatch from main, approved cloudflare-staging SHA, reviewer per job)
   ┌──────────────────────┬───────────────────────┬──────────────────────┬──────────────────────┐
   │ database             │ deploy                │ test                 │ production-build-    │
   │ env staging-db       │ env staging-deploy    │ env staging-test     │ check (no env, no    │
@@ -125,7 +125,9 @@ Isolation never rests on variable names alone. Every staging job proves
 | Check | Where |
 |---|---|
 | The staging ref is **typed at dispatch** (20 characters). | all staging jobs |
-| `PRODUCTION_REF` (from the ref-only repository secret `PRODUCTION_SUPABASE_REF`, never the production workflow's `SUPABASE_PROJECT_ID`) must be present and well-formed. | all jobs |
+| `PRODUCTION_REF` (from `PRODUCTION_SUPABASE_REF`, held in the staging environments, never the production workflow's `SUPABASE_PROJECT_ID`) must be present and well-formed. A wrong value still can't reach production: production has no staging marker, isn't brand new and has no `staging_identity()`, so every database and deploy gate refuses it. | database, deploy, test |
+| **Approved revision only:** dispatched from `main`; `staging_sha` = `CLOUDFLARE_STAGING_APPROVED_SHA`, contained in `cloudflare-staging`, carrying a byte-identical workflow file; every job checks out exactly that SHA. | `authorize` (no secrets) |
+| Every required staging setting is present (`--require`), so a missing secret or variable fails before any work. | every job |
 | Ref in `STAGING_SUPABASE_URL` = typed ref ≠ production ref; ref in `STAGING_DB_URL` = typed ref. | database, deploy, test |
 | None of `SUPABASE_PROJECT_ID`, `SUPABASE_DB_PASSWORD`, `SUPABASE_ACCESS_TOKEN`, `SUPABASE_SERVICE_ROLE_KEY` is set in the job (checked at run time; values never read). | every job |
 | **Access before application:** the anonymous request is redirected to `<team>.cloudflareaccess.com` *and* the CI service token gets 200. A 404 (no Worker yet), a 200, a 403 without the login redirect, or a lookalike host all fail. | deploy-staging (before build and upload, and again after) |
@@ -136,8 +138,10 @@ Isolation never rests on variable names alone. Every staging job proves
 
 Further:
 - **Separate credentials:**
-  - three GitHub environments, each limited to the `cloudflare-staging`
-    branch and each requiring a reviewer;
+  - three GitHub environments, each limited to `main` (where the reviewed
+    workflow file lives) and each requiring a reviewer;
+  - secrets passed only to the steps that use them, never to dependency
+    installation or tool setup;
   - the database job never sees Cloudflare tokens, and the deploy job
     never sees a database credential;
   - the service key and admin password reach the database job only in
@@ -235,92 +239,139 @@ Further:
 
 ## 6. GitHub secrets and variables
 
-Create under *Settings → Environments*. For each environment: **Deployment
-branches → `cloudflare-staging` only**, and **Required reviewers → owner**.
+The workflow is dispatched **from `main`** (section 7), so the staging
+environments are restricted to `main`, not to `cloudflare-staging`.
+
+Create under *Settings → Environments*. For each staging environment:
+- **Deployment branches and tags → Selected → `main`**;
+- **Required reviewers → owner** (with "Prevent self-review" off, since
+  the owner is the only reviewer);
+- **Allow administrators to bypass** off.
 
 | Environment | Secrets | Variables |
 |---|---|---|
-| `staging-db` | `STAGING_DB_URL` (session pooler), `STAGING_SUPABASE_SERVICE_ROLE_KEY`, `STAGING_ADMIN_PASSWORD` (≥ 16 chars) | `STAGING_SUPABASE_URL`, `STAGING_ADMIN_EMAIL` |
-| `staging-deploy` | `CLOUDFLARE_DEPLOY_TOKEN`, `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET` | `STAGING_SUPABASE_URL`, `STAGING_SUPABASE_ANON_KEY`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_WORKERS_SUBDOMAIN` |
-| `staging-test` | `CLOUDFLARE_ANALYTICS_TOKEN`, `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`, `STAGING_ADMIN_PASSWORD` | `STAGING_SUPABASE_URL`, `STAGING_ADMIN_EMAIL`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_WORKERS_SUBDOMAIN`, `EXPECTED_DAILY_PAGEVIEWS` (cost projection only) |
+| `staging-db` | `STAGING_DB_URL` (session pooler), `STAGING_SUPABASE_SERVICE_ROLE_KEY`, `STAGING_ADMIN_PASSWORD` (≥ 16 chars), `PRODUCTION_SUPABASE_REF` | `STAGING_SUPABASE_URL`, `STAGING_ADMIN_EMAIL` |
+| `staging-deploy` | `CLOUDFLARE_DEPLOY_TOKEN`, `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`, `PRODUCTION_SUPABASE_REF` | `STAGING_SUPABASE_URL`, `STAGING_SUPABASE_ANON_KEY`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_WORKERS_SUBDOMAIN` |
+| `staging-test` | `CLOUDFLARE_ANALYTICS_TOKEN`, `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`, `STAGING_ADMIN_PASSWORD`, `PRODUCTION_SUPABASE_REF` | `STAGING_SUPABASE_URL`, `STAGING_ADMIN_EMAIL`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_WORKERS_SUBDOMAIN`, `EXPECTED_DAILY_PAGEVIEWS` (cost projection only) |
 
-**Repository-level (new):** secret `PRODUCTION_SUPABASE_REF`.
-- It holds the production project ref: an identifier that also appears in
-  the public site's Supabase URL, not a credential.
-- It is the only production value the staging workflow reads, and only to
-  prove the staging target is a different project.
-- It is a secret rather than a variable so it is masked in logs.
+**`PRODUCTION_SUPABASE_REF`** is the production project ref: an
+identifier, not a credential (it also appears in the public site's Supabase
+URL).
+- It is kept in the three staging environments rather than at repository
+  level, so a workflow on any other branch can't read it.
+- It is a secret so it is masked in logs.
 - If it is missing, every staging job fails closed.
 
-## 6a. Production credential isolation: migration plan
+**Repository variable `CLOUDFLARE_STAGING_APPROVED_SHA`** is the full
+commit SHA of the reviewed `cloudflare-staging` revision that may run.
+Setting it is the owner's act of approval. Repository variables can only
+be changed by administrators.
+
+## 6a. Production credential isolation: migration sequence
 
 **Today (reviewed by name only; no values read or printed):**
-- `supabase-migrate.yml` reads three **repository-level** secrets:
-  `SUPABASE_ACCESS_TOKEN`, `SUPABASE_DB_PASSWORD`, `SUPABASE_PROJECT_ID`.
-- It binds no environment, so any workflow on any branch, written by anyone
-  with write access, could reference them.
-- The staging workflow references none of them: the policy tests and the
-  run-time gates enforce that.
+- `supabase-migrate.yml` on `main` reads three **repository-level**
+  secrets: `SUPABASE_ACCESS_TOKEN`, `SUPABASE_DB_PASSWORD`,
+  `SUPABASE_PROJECT_ID`.
+- Its job binds no environment.
+- **Exposure:** any workflow file on any branch, pushed by anyone with
+  write access and dispatched there, can read these secrets. This predates
+  the Cloudflare work. The Cloudflare staging workflow references none of
+  them, as enforced by test.
 
 **Target:**
-- Those three secrets live only in a protected GitHub environment
-  `production`:
-  - deployment branches: `main` only;
+- The three secrets live only in environment **`supabase-production`**:
+  - deployment branch `main` only;
   - required reviewer: owner;
-  - optionally a short wait timer.
-- `supabase-migrate.yml` binds `environment: production`.
-- No branch other than `main` can obtain them, and every run needs an
-  approval.
+  - admin bypass off.
+- `supabase-migrate.yml` binds `environment: supabase-production` and
+  refuses any ref other than `main` as its first step. The patch is
+  prepared; the regression tests pass.
+- The name avoids GitHub's case-insensitive `Production`/`Preview`
+  environments that the Vercel integration creates for its deployment
+  records.
 
-**Steps** (each a separate approval; nothing done yet). Order matters so
-the migration workflow never loses access:
-1. Create environment `production`: branches `main` only, reviewer owner.
-   No secrets yet.
-2. Add the same three secrets to `production`, same names and values,
-   copied by the owner from the Supabase dashboard (GitHub can't reveal
-   existing secret values). While both exist, the environment secret takes
-   precedence inside environment-bound jobs.
-3. Add repository secret `PRODUCTION_SUPABASE_REF` (the project ref only),
-   used by the staging workflow.
-4. A one-line change to `.github/workflows/supabase-migrate.yml`, under
-   `jobs.migrate`:
-   ```yaml
-       environment: production
-   ```
-   Commit it on `main` through the normal approval. A `preflight` or
-   `verify` run then proves the workflow reads the environment secrets
-   (it waits for the reviewer and passes the same checks as before).
-5. Only then delete the three **repository-level** secrets. Run `verify`
-   again to prove nothing depends on them.
-6. Rollback: re-add the repository secrets, or remove the `environment:`
-   line. Either restores today's behaviour.
+**Exact sequence.** Each step is a separate approval. Steps 1–6 should be
+done in one sitting, and **before** the staging workflow is registered on
+`main` or any staging secret is created.
+1. Create environment `supabase-production`: deployment branches `main`
+   only, required reviewer owner, admin bypass off. No secrets yet.
+   *Effect: none on existing runs.*
+2. Add `SUPABASE_ACCESS_TOKEN`, `SUPABASE_DB_PASSWORD` and
+   `SUPABASE_PROJECT_ID` to `supabase-production`, same names, values
+   copied by the owner from Supabase. GitHub can't reveal or copy existing
+   secret values.
+   *Effect: none yet; the migration job doesn't bind the environment.*
+3. Commit the prepared patch to `main`
+   (`supabase-migrate.environment.patch`: the environment binding and the
+   main-only guard), through the normal review.
+   *Effect: in this job, the environment's secrets take precedence over
+   repository secrets with the same names.*
+4. Run `supabase-migrate` in **`preflight`** mode from `main` (read-only;
+   it waits for the reviewer). This proves the job gets the environment's
+   credentials.
+5. **Delete the three repository-level secrets.**
+6. Run `preflight` again: it still passes, so nothing depends on
+   repository scope. Confirm *Settings → Secrets → Actions → Repository
+   secrets* no longer lists them.
+
+**Rollback:** remove the `environment:` line (revert the commit), or
+re-create the repository secrets. Either restores today's behaviour, and
+with it today's exposure.
+
+**Exposure during the transition:**
+- Steps 1–4: the repository-level secrets still exist, so the exposure is
+  exactly today's, not wider. Keep the window short, and don't push new
+  workflow files or create staging environments until step 5.
+- Step 5 onwards: only jobs on `main` that bind `supabase-production`, and
+  are approved by the reviewer, can obtain the credentials.
 
 **How the production migration workflow keeps working:**
-- The secret names are unchanged, and its `env:` block
-  (`${{ secrets.SUPABASE_* }}`) resolves the environment's secrets once
-  the job binds `environment: production`.
-- It is manual dispatch on `main`, so the branch rule is satisfied. The
-  only new step is the reviewer approval before the job starts.
-- The staging workflow is unaffected: it never referenced those names, and
-  it reads `PRODUCTION_SUPABASE_REF` instead.
+- Same file, same secret names, same `env:` expressions, same steps
+  (verified byte-for-byte apart from the two additions).
+- It is dispatched from `main` as before.
+- New: a reviewer approval before the job starts, and a refusal when it is
+  dispatched from another branch. That refusal comes from the environment
+  rule and from its own guard step.
 
-**Why the staging workflow can't use production credentials (after and
-before the move):**
-- It references no production secret name. Policy tests forbid
-  `SUPABASE_PROJECT_ID`, `SUPABASE_DB_PASSWORD`, `SUPABASE_ACCESS_TOKEN`,
-  `SUPABASE_SERVICE_ROLE_KEY` and `VERCEL_TOKEN` in `secrets.` or `vars.`.
-- It has no bulk or dynamic secret access: `toJSON(secrets)`,
-  `secrets[...]`, `secrets: inherit` and reusable-workflow jobs are all
-  forbidden by test.
-- GitHub passes a job only the secrets its YAML names. Nothing is inherited
-  from the runner or the repository into the process environment.
-- Every job's first step refuses if any production credential name is set
-  (`check.mjs`, `checkRefs`).
-- After the move, those secrets exist only in `production`, which the
-  `cloudflare-staging` branch can't use, so even an edited staging
-  workflow couldn't read them.
+**Why staging can never use the production credentials:**
+- After step 5 they exist only in `supabase-production`.
+- The staging workflow never binds `supabase-production`; a test forbids
+  any production environment.
+- It never names the production secrets.
+- It has no bulk or dynamic secret access (`toJSON(secrets)`,
+  `secrets[...]`, `secrets: inherit` and reusable workflows are forbidden).
+- It passes secrets only at step level, and never to install or setup
+  steps.
+- Each job refuses if a production credential name is present.
+- The staging code it runs is only the approved revision, inside jobs bound
+  to staging environments, with a read-only `GITHUB_TOKEN` that can't
+  dispatch other workflows.
 
-## 7. Workflow modes
+## 7. Dispatch, branch selection and workflow modes
+
+**Registration:** GitHub only lists and dispatches a `workflow_dispatch`
+workflow whose file is on the default branch. `main` therefore carries
+`.github/workflows/cloudflare-staging.yml` alone, with no application or
+script files. The same file, byte for byte, is on `cloudflare-staging`.
+
+**Branch selection:** each run uses the workflow file from the ref chosen
+in "Use workflow from".
+
+| Chosen ref | What happens |
+|---|---|
+| **`main`** (the only supported choice) | `authorize` checks the event, `ref = refs/heads/main` and the workflow path. It then approves `staging_sha` only if it equals `CLOUDFLARE_STAGING_APPROVED_SHA`, is contained in `cloudflare-staging`, and its copy of this workflow is byte-identical to `main`'s. Every other job checks out exactly that SHA. |
+| `cloudflare-staging` or any other branch | That branch's copy of the file runs. Its `authorize` refuses (ref is not `main`). Even a modified copy gets **no staging secret** (the staging environments allow `main` only) and **no production secret** (after §6a they exist only in `supabase-production`, which also allows `main` only). |
+
+**Arbitrary code with production credentials:**
+- *Through this workflow:* it never binds `supabase-production` and runs
+  only reviewed `main` YAML with the approved revision.
+- *Through any other branch's workflow:* after §6a step 5 there is no
+  repository-level production secret left to read.
+- *Remaining trust root:* write access to `main`. Protect `main` (pull
+  request with review, no force-push, no deletion).
+
+**Workflow modes:**
 
 | Mode | Job / environment | What it does |
 |---|---|---|
@@ -330,6 +381,8 @@ before the move):**
 | `deploy-staging` | deploy / `staging-deploy` | gate (`--anon`) → **Access gate (`--access`)** → staging build (guard) → `check-build-config --target staging` → `bundle-size` (5 MiB budget) → `vinext-cloudflare deploy --skip-build` → post-deploy `--site` check |
 | `test-staging` | test / `staging-test` | gate (refs + Access + banner + noindex) → cold → browser round → warm ×2 → 30-min soak → evaluate; JSON artifact for 14 days |
 | `production-build-check` | no environment, no credentials | gate (`--env`) → production build (placeholder anon key) → `check-build-config --target production` → `bundle-size`; nothing uploaded |
+
+Every mode first runs `authorize` (no secrets), then its job at the approved revision.
 
 Run `test-staging` right after `deploy-staging`. Wait 60 minutes before
 re-running it after a run that stopped before the soak, so the browser
@@ -379,41 +432,46 @@ stage report.
 
 Each step is a separate approval; stop on any failure.
 
-1. Done in this stage: branch `cloudflare-staging` pushed (not merged).
-2. **Owner setup:**
+1. **Production credential isolation** (§6a, steps 1–6), including the
+   `supabase-migrate.yml` environment patch on `main`.
+2. **Commit the 05E-B2C changes to `cloudflare-staging` and push.** Note
+   the resulting full SHA.
+3. **Register the workflow on `main`:** one commit adding only
+   `.github/workflows/cloudflare-staging.yml`, byte-identical to the
+   branch's copy.
+4. **Protect `main`:** require pull requests with review, block
+   force-pushes and deletion.
+5. **Owner setup:**
    - Cloudflare account steps 1–3, the deploy token and the analytics
-     token (section 4);
-   - the Supabase staging org and project (section 5);
-   - the three GitHub environments, each limited to `cloudflare-staging`
-     with a required reviewer;
-   - their secrets and variables, plus repository secret
-     `PRODUCTION_SUPABASE_REF` (section 6).
+     token (§4);
+   - the Supabase staging org and project (§5);
+   - the three staging environments (`main` only, reviewer, no bypass) and
+     their secrets and variables, including `PRODUCTION_SUPABASE_REF` (§6).
+6. **Owner:** set repository variable `CLOUDFLARE_STAGING_APPROVED_SHA` to
+   the SHA from step 2.
+7. **Dispatch from `main`**, each run approved: `production-build-check`,
+   then `migrate-staging`, `seed-staging`, `deploy-staging-placeholder`.
+8. **Owner:** enable Access on mktbd-staging's workers.dev route (email +
+   Service Auth), put the service token into `staging-deploy` and
+   `staging-test`, check the Access login in a private window, and set the
+   staging Worker secret.
+9. **Dispatch** `deploy-staging` (refuses unless Access is proven), then
+   `test-staging`.
+10. Review the results together.
 
-   Report the staging ref and subdomain (they are not secret).
-3. Approve **`production-build-check`**: no credentials, no upload.
-4. Approve **`migrate-staging`** (typed ref), then **`seed-staging`**.
-5. Approve **`deploy-staging-placeholder`**: static page only.
-6. **Owner:** enable Access on mktbd-staging's workers.dev route (email +
-   Service Auth policies) and put the service token into `staging-deploy`
-   and `staging-test`. Check in a private window that the Access login
-   appears. Set the Worker secret `SUPABASE_SERVICE_ROLE_KEY` (staging
-   value).
-7. Approve **`deploy-staging`**. It refuses unless Access is proven, then
-   uploads the application and re-verifies Access, banner and noindex.
-8. Approve **`test-staging`** right after it (about 60–75 minutes).
-9. Review the results together.
-
-The production credential move (section 6a) can happen at any point. It
-doesn't affect staging, and it is recommended before any production
-Cloudflare work.
+**Whenever `cloudflare-staging` changes,** before the next run: review
+it, update `CLOUDFLARE_STAGING_APPROVED_SHA`, and, if the workflow file
+changed, commit the identical file to `main`. `authorize` refuses until
+both match.
 
 Production hosting comes after this, each step approved separately: image
 variants, the DNS move, production secrets, a production deploy job and
 the cutover.
 
-Rollback at any point: redeploy the placeholder, or delete the staging
-Worker; revoke both tokens and the Access service token; pause the staging
-project. Production is unaffected.
+Rollback at any point: unset `CLOUDFLARE_STAGING_APPROVED_SHA` (every run
+then refuses), redeploy the placeholder or delete the staging Worker,
+revoke the Cloudflare tokens and the Access service token, pause the
+staging project. Production is unaffected.
 
 ## 10. Open issues
 

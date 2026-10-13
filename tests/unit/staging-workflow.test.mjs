@@ -2,10 +2,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-// Stage 05E-B2B: the Cloudflare staging workflow must never reach production credentials -- not by
-// reference, not through inherited or dynamic secret contexts -- each job may only use the secrets of
-// its own GitHub environment, and the application is only ever uploaded behind Cloudflare Access.
+// Stages 05E-B2B/B2C: the Cloudflare staging workflow must never reach production credentials -- not
+// by reference, not through inherited, dynamic or bulk secret contexts -- each job may only use the
+// secrets of its own GitHub environment, and only in the steps that need them; it runs only the
+// approved cloudflare-staging revision, dispatched from main; and the application is only ever
+// uploaded behind Cloudflare Access.
 const workflow = readFileSync(new URL("../../.github/workflows/cloudflare-staging.yml", import.meta.url), "utf8");
+const lines = workflow.split("\n");
 
 /** Top-level section text, and each job's text keyed by job id (two-space indented keys under jobs:). */
 function sections(text) {
@@ -21,16 +24,19 @@ function sections(text) {
 }
 const secretsIn = (text) => [...new Set([...text.matchAll(/secrets\.([A-Z0-9_]+)/g)].map((m) => m[1]))].sort();
 const { head, jobs } = sections(workflow);
+const PRODUCTION_NAMES = ["SUPABASE_PROJECT_ID", "SUPABASE_DB_PASSWORD", "SUPABASE_ACCESS_TOKEN", "SUPABASE_SERVICE_ROLE_KEY", "VERCEL_TOKEN"];
 
 test("staging workflow: manual dispatch only, read-only token", () => {
   assert.match(head, /^on:\s*\n\s+workflow_dispatch:/m);
   assert.doesNotMatch(head, /^\s+(push|pull_request|pull_request_target|schedule|workflow_run|repository_dispatch|workflow_call):/m);
   assert.match(head, /permissions:\s*\n\s+contents: read\s*\n/);
-  assert.doesNotMatch(workflow, /write-all|id-token:\s*write|contents:\s*write|permissions:\s*\n\s+[a-z-]+:\s*write/);
+  assert.doesNotMatch(workflow, /write-all|id-token:\s*write|contents:\s*write|actions:\s*write|permissions:\s*\n\s+[a-z-]+:\s*write/);
 });
 
-test("staging workflow: only the ref-only production identifier is read at top level", () => {
-  assert.deepEqual(secretsIn(head), ["PRODUCTION_SUPABASE_REF"]);
+test("staging workflow: nothing secret at workflow level", () => {
+  assert.deepEqual(secretsIn(head), []);
+  const env = head.match(/^env:\s*\n((?: {2}.*\n)+)/m)?.[1] ?? "";
+  assert.deepEqual([...env.matchAll(/^ {2}([A-Z_]+):/gm)].map((m) => m[1]), ["WORKER_BUDGET_KIB"]);
 });
 
 test("staging workflow: no inherited, dynamic or bulk secret access", () => {
@@ -43,10 +49,11 @@ test("staging workflow: no inherited, dynamic or bulk secret access", () => {
 
 test("staging workflow: each job uses only its own environment's secrets", () => {
   const expected = {
-    database: { environment: "staging-db", secrets: ["STAGING_ADMIN_PASSWORD", "STAGING_DB_URL", "STAGING_SUPABASE_SERVICE_ROLE_KEY"] },
+    authorize: { environment: null, secrets: [] },
+    database: { environment: "staging-db", secrets: ["PRODUCTION_SUPABASE_REF", "STAGING_ADMIN_PASSWORD", "STAGING_DB_URL", "STAGING_SUPABASE_SERVICE_ROLE_KEY"] },
     placeholder: { environment: "staging-deploy", secrets: ["CLOUDFLARE_DEPLOY_TOKEN"] },
-    deploy: { environment: "staging-deploy", secrets: ["CF_ACCESS_CLIENT_ID", "CF_ACCESS_CLIENT_SECRET", "CLOUDFLARE_DEPLOY_TOKEN"] },
-    test: { environment: "staging-test", secrets: ["CF_ACCESS_CLIENT_ID", "CF_ACCESS_CLIENT_SECRET", "CLOUDFLARE_ANALYTICS_TOKEN", "STAGING_ADMIN_PASSWORD"] },
+    deploy: { environment: "staging-deploy", secrets: ["CF_ACCESS_CLIENT_ID", "CF_ACCESS_CLIENT_SECRET", "CLOUDFLARE_DEPLOY_TOKEN", "PRODUCTION_SUPABASE_REF"] },
+    test: { environment: "staging-test", secrets: ["CF_ACCESS_CLIENT_ID", "CF_ACCESS_CLIENT_SECRET", "CLOUDFLARE_ANALYTICS_TOKEN", "PRODUCTION_SUPABASE_REF", "STAGING_ADMIN_PASSWORD"] },
     "production-build-check": { environment: null, secrets: [] },
   };
   assert.deepEqual(Object.keys(jobs).sort(), Object.keys(expected).sort());
@@ -55,12 +62,76 @@ test("staging workflow: each job uses only its own environment's secrets", () =>
     assert.equal(env, want.environment, `${id} environment`);
     assert.deepEqual(secretsIn(jobs[id]), want.secrets, `${id} secrets`);
   }
+  assert.doesNotMatch(workflow, /environment:\s*(supabase-)?production\b/i, "never binds a production environment");
 });
 
-test("staging workflow: no production credential names anywhere; every job runs an isolation gate", () => {
-  for (const name of ["SUPABASE_PROJECT_ID", "SUPABASE_DB_PASSWORD", "SUPABASE_ACCESS_TOKEN", "SUPABASE_SERVICE_ROLE_KEY", "VERCEL_TOKEN"])
-    assert.doesNotMatch(workflow, new RegExp(`(secrets|vars)\\.${name}\\b`), name);
-  for (const [id, text] of Object.entries(jobs)) assert.match(text, /node scripts\/staging\/check\.mjs|checkRefs\(process\.env\)/, `${id} has an isolation gate`);
+test("staging workflow: secrets only at step level, never in install, checkout, setup or artifact steps", () => {
+  lines.forEach((line, i) => {
+    if (!/secrets\./.test(line)) return;
+    assert.match(line, /^ {10}[A-Z][A-Z0-9_]*: \$\{\{ secrets\.[A-Z0-9_]+ \}\}\s*$/, `line ${i + 1}: secret must be a step-level env entry`);
+    let j = i;
+    while (j >= 0 && !/^ {6}- /.test(lines[j])) j--;
+    let k = i + 1;
+    while (k < lines.length && !/^ {6}- |^ {2}[a-z]/.test(lines[k])) k++;
+    const step = lines.slice(j, k).join("\n");
+    assert.doesNotMatch(step, /uses:\s*actions\/(checkout|setup-node|upload-artifact)|supabase\/setup-cli|npm ci|npm install|playwright install/, `line ${i + 1}: secret in a setup/install step`);
+  });
+});
+
+test("staging workflow: authorize gates every run on main + the approved cloudflare-staging revision", () => {
+  const a = jobs.authorize;
+  assert.match(a, /\[ "\$EVENT" = workflow_dispatch \]/);
+  assert.match(a, /\[ "\$REF" = refs\/heads\/main \]/);
+  assert.match(a, /WORKFLOW_REF" = "\$REPO\/\.github\/workflows\/cloudflare-staging\.yml@refs\/heads\/main"/);
+  assert.match(a, /REQUESTED: \$\{\{ inputs\.staging_sha \}\}/);
+  assert.match(a, /APPROVED: \$\{\{ vars\.CLOUDFLARE_STAGING_APPROVED_SHA \}\}/);
+  assert.match(a, /\^\[0-9a-f\]\{40\}\$/, "full SHA only");
+  assert.match(a, /\[ "\$REQUESTED" = "\$APPROVED" \]/);
+  assert.match(a, /merge-base --is-ancestor "\$REQUESTED" HEAD/, "contained in cloudflare-staging");
+  assert.match(a, /ref: cloudflare-staging/);
+  assert.match(a, /cmp -s approved-workflow\.yml main-tree\/\.github\/workflows\/cloudflare-staging\.yml/, "same workflow file as main");
+});
+
+test("staging workflow: dispatch inputs never reach a script except as environment variables", () => {
+  const allowed = [
+    /^ +[A-Z][A-Z0-9_]*: \$\{\{ inputs\.[a-z_]+ \}\}\s*$/, // step/job env entry
+    /^ +if: inputs\.mode == '[a-z-]+'( \|\| inputs\.mode == '[a-z-]+')?\s*$/, // job/step condition on the choice input
+    /--db \$\{\{ inputs\.mode == 'migrate-staging' && 'fresh-or-marked' \|\| 'marked' \}\}/, // constant strings only
+  ];
+  lines.forEach((line, i) => {
+    if (line.includes("inputs.") && /\$\{\{|^ +if:/.test(line)) assert.ok(allowed.some((rx) => rx.test(line)), `line ${i + 1}: inputs used outside an env entry or condition`);
+  });
+});
+
+test("staging workflow: every other job needs authorize and checks out only the approved revision", () => {
+  for (const [id, text] of Object.entries(jobs)) {
+    if (id === "authorize") continue;
+    assert.match(text, /^ {4}needs: authorize\s*$/m, `${id} needs authorize`);
+    const checkouts = [...text.matchAll(/uses: actions\/checkout@[0-9a-f]{40}[^\n]*\n((?: {8}.*\n)*)/g)];
+    assert.ok(checkouts.length >= 1, `${id} checks out`);
+    for (const c of checkouts) assert.match(c[1], /ref: \$\{\{ needs\.authorize\.outputs\.sha \}\}/, `${id}: checkout pinned to the approved revision`);
+  }
+});
+
+test("staging workflow: no production credential names; every job checks settings and credentials first", () => {
+  for (const name of PRODUCTION_NAMES) assert.doesNotMatch(workflow, new RegExp(`(secrets|vars)\\.${name}\\b`), name);
+  for (const [id, text] of Object.entries(jobs)) {
+    if (id === "authorize") continue;
+    assert.match(text, /node (scripts\/staging\/|\.\.\/)check\.mjs/, `${id} has an isolation gate`);
+  }
+  // The first gate of each job that uses staging settings fails on any missing one.
+  for (const id of ["database", "placeholder", "deploy", "test"]) {
+    const first = jobs[id].split("\n").find((l) => /check\.mjs/.test(l)) ?? "";
+    assert.match(first, /--require [A-Z_,]+/, `${id}: first gate checks required settings`);
+  }
+  assert.match(jobs.database, /check\.mjs --db [^\n]*--require [A-Z_,]*STAGING_DB_URL/, "database gate requires the staging DB URL");
+  // Gates run before the work they protect.
+  const before = (id, gate, work) => assert.ok(jobs[id].indexOf(gate) >= 0 && jobs[id].indexOf(gate) < jobs[id].indexOf(work), `${id}: ${gate} before ${work}`);
+  before("database", "check.mjs --db", "supabase db push");
+  before("database", "check.mjs --db", "node scripts/staging/seed.mjs");
+  before("placeholder", "check.mjs --env --require CLOUDFLARE_API_TOKEN", "npx cf deploy");
+  before("deploy", "check.mjs --anon", "npm run build:vinext");
+  before("test", "checkRefs(process.env)", "measure.mjs");
 });
 
 test("staging workflow: the application is uploaded only behind verified Cloudflare Access", () => {
@@ -71,12 +142,14 @@ test("staging workflow: the application is uploaded only behind verified Cloudfl
   assert.match(d, /DEPLOY_TARGET: staging/);
   assert.match(d, /deploy --skip-build/, "deploys only the checked build");
   assert.ok(d.indexOf('check.mjs --site "$BASE"') > d.indexOf("vinext-cloudflare deploy"), "verified after upload");
-  // The placeholder job deploys only the static placeholder project, never the application.
-  assert.match(jobs.placeholder, /working-directory: scripts\/staging\/placeholder\s*\n\s+run: npx cf deploy --prebuilt/);
+  assert.match(jobs.placeholder, /working-directory: scripts\/staging\/placeholder/);
+  assert.match(jobs.placeholder, /npx cf deploy --prebuilt/);
   assert.doesNotMatch(jobs.placeholder, /build:vinext|vinext-cloudflare|NEXT_PUBLIC_|SUPABASE/);
 });
 
-test("staging workflow: no production deployment", () => {
-  assert.doesNotMatch(jobs["production-build-check"], /cf deploy|vinext-cloudflare deploy|CLOUDFLARE_API_TOKEN/);
+test("staging workflow: no production deployment, and the production build check uses no production value", () => {
+  const p = jobs["production-build-check"];
+  assert.doesNotMatch(p, /cf deploy|vinext-cloudflare deploy|CLOUDFLARE_API_TOKEN|secrets\./);
+  assert.match(p, /dummy=buildcheck0000000000/);
   assert.doesNotMatch(workflow, /DEPLOY_TARGET:\s*production/);
 });
