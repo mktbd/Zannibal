@@ -1,0 +1,373 @@
+# Cloudflare Workers (Paid) STAGING workflow (Stages 05E-B2B/B2C). Manual dispatch from main only.
+#
+# Dispatch model (docs/CLOUDFLARE_WORKERS.md §7):
+# - This file is registered on main (GitHub only dispatches workflow_dispatch workflows whose file is
+#   on the default branch) and must be dispatched with "Use workflow from: main". The `authorize` job
+#   refuses any other event, ref or workflow file, then approves exactly one revision of the
+#   cloudflare-staging branch: the `staging_sha` typed at dispatch must equal the repository variable
+#   CLOUDFLARE_STAGING_APPROVED_SHA (set by the owner after review), be contained in
+#   cloudflare-staging, and carry a byte-identical copy of this workflow file. Every other job checks
+#   out that revision only.
+# - The staging GitHub environments (staging-db, staging-deploy, staging-test) are restricted to the
+#   main branch and require a reviewer, so a copy of this workflow on any other branch gets no
+#   staging secret. Production Supabase credentials live only in the supabase-production
+#   environment, which no job here binds.
+#
+# Isolation:
+# - Secrets are passed at step level, only to the steps that use them -- never to dependency
+#   installation, checkout or tool setup. No production credential is referenced; the only production
+#   value is PRODUCTION_SUPABASE_REF (an identifier, held in the staging environments) used to prove
+#   the staging target is a different project. Every job first refuses if a production credential
+#   name is present or a required staging setting is missing.
+# - scripts/staging/check.mjs proves from content (URL/DB refs, staging marker in the database and via
+#   an anon RPC, Cloudflare Access, staging banner) that the target is the disposable staging project.
+# - Access first: deploy-staging-placeholder puts a static page on the mktbd-staging name so Cloudflare
+#   Access can be enabled; deploy-staging uploads the application only after proving Access enforces.
+# - There is NO production deployment. production-build-check builds the production Worker with no
+#   credential and a dummy project ref, and uploads nothing.
+# - tests/unit/staging-workflow.test.mjs (on cloudflare-staging) enforces all of the above.
+name: Cloudflare staging (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "migrate-staging | seed-staging | deploy-staging-placeholder (static page only; first deploy) | deploy-staging (application; refuses unless Cloudflare Access is enforcing) | test-staging (cold, browser, warm x2, soak, evaluate) | production-build-check (no credentials, no upload)"
+        required: true
+        type: choice
+        options: [migrate-staging, seed-staging, deploy-staging-placeholder, deploy-staging, test-staging, production-build-check]
+      staging_sha:
+        description: "Full 40-character commit SHA of cloudflare-staging to run; must equal the approved revision (repository variable CLOUDFLARE_STAGING_APPROVED_SHA)"
+        required: true
+        type: string
+      staging_ref:
+        description: "Type the STAGING Supabase project ref (20 characters) to confirm the target (any value for production-build-check)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-staging
+  cancel-in-progress: false
+
+env:
+  WORKER_BUDGET_KIB: "5120"
+
+jobs:
+  authorize:
+    # No environment and no secrets: decides which revision may run, before any credential is involved.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.approve.outputs.sha }}
+    steps:
+      - name: Refuse anything but a manual dispatch of main's workflow file
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          [ "$EVENT" = workflow_dispatch ] || { echo "::error::manual dispatch only"; exit 1; }
+          [ "$REF" = refs/heads/main ] || { echo "::error::dispatch with 'Use workflow from: main' (got $REF)"; exit 1; }
+          [ "$WORKFLOW_REF" = "$REPO/.github/workflows/cloudflare-staging.yml@refs/heads/main" ] || { echo "::error::unexpected workflow file"; exit 1; }
+      - name: Check out this workflow's commit on main (workflow file only)
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: main-tree
+          sparse-checkout: .github/workflows
+          persist-credentials: false
+      - name: Check out the cloudflare-staging branch history
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          ref: cloudflare-staging
+          path: staging-tree
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Approve the requested revision
+        id: approve
+        env:
+          REQUESTED: ${{ inputs.staging_sha }}
+          APPROVED: ${{ vars.CLOUDFLARE_STAGING_APPROVED_SHA }}
+        run: |
+          set -euo pipefail
+          [[ "$REQUESTED" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::staging_sha must be a full 40-character commit SHA"; exit 1; }
+          [[ "$APPROVED" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::repository variable CLOUDFLARE_STAGING_APPROVED_SHA is not set"; exit 1; }
+          [ "$REQUESTED" = "$APPROVED" ] || { echo "::error::staging_sha is not the approved revision"; exit 1; }
+          git -C staging-tree merge-base --is-ancestor "$REQUESTED" HEAD || { echo "::error::the approved revision is not on cloudflare-staging"; exit 1; }
+          git -C staging-tree show "$REQUESTED:.github/workflows/cloudflare-staging.yml" > approved-workflow.yml
+          cmp -s approved-workflow.yml main-tree/.github/workflows/cloudflare-staging.yml || { echo "::error::the approved revision's workflow file differs from main's"; exit 1; }
+          echo "sha=$REQUESTED" >> "$GITHUB_OUTPUT"
+          echo "Approved cloudflare-staging revision: $REQUESTED" >> "$GITHUB_STEP_SUMMARY"
+
+  database:
+    needs: authorize
+    if: inputs.mode == 'migrate-staging' || inputs.mode == 'seed-staging'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: staging-db
+    env:
+      STAGING_REF_CONFIRM: ${{ inputs.staging_ref }}
+      STAGING_SUPABASE_URL: ${{ vars.STAGING_SUPABASE_URL }}
+      STAGING_ADMIN_EMAIL: ${{ vars.STAGING_ADMIN_EMAIL }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          ref: ${{ needs.authorize.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies (no secrets in this step)
+        run: npm ci --no-audit --no-fund
+      - name: Isolation gate
+        env:
+          PRODUCTION_REF: ${{ secrets.PRODUCTION_SUPABASE_REF }}
+          STAGING_DB_URL: ${{ secrets.STAGING_DB_URL }}
+        run: node scripts/staging/check.mjs --db ${{ inputs.mode == 'migrate-staging' && 'fresh-or-marked' || 'marked' }} --require PRODUCTION_REF,STAGING_REF_CONFIRM,STAGING_SUPABASE_URL,STAGING_DB_URL
+      - name: Set up Supabase CLI
+        if: inputs.mode == 'migrate-staging'
+        uses: supabase/setup-cli@1dedf2c611547ede7232d26866dd3c56ab903bbb # v1.7.3
+        with:
+          version: 2.119.0
+      - name: Migrate STAGING (migrations 1-11), mark it, verify
+        if: inputs.mode == 'migrate-staging'
+        env:
+          STAGING_DB_URL: ${{ secrets.STAGING_DB_URL }}
+        run: |
+          set -euo pipefail
+          supabase db push --db-url "$STAGING_DB_URL" --yes
+          psql "$STAGING_DB_URL" -X -q -v ON_ERROR_STOP=1 -v ref="$STAGING_REF_CONFIRM" -f scripts/staging/mark-staging.sql
+          ok="$(psql "$STAGING_DB_URL" -X -x -f supabase/checks/20261009000011_order_hardening_verify.sql | grep -c '| t$' || true)"
+          echo "Verification checks true: ${ok}/18"
+          [ "$ok" = 18 ] || { echo "::error::staging verification failed"; exit 1; }
+      - name: Seed STAGING with synthetic fixtures
+        if: inputs.mode == 'seed-staging'
+        env:
+          PRODUCTION_REF: ${{ secrets.PRODUCTION_SUPABASE_REF }}
+          STAGING_DB_URL: ${{ secrets.STAGING_DB_URL }}
+          STAGING_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
+          STAGING_ADMIN_PASSWORD: ${{ secrets.STAGING_ADMIN_PASSWORD }}
+        run: |
+          node scripts/staging/check.mjs --env --require STAGING_SUPABASE_SERVICE_ROLE_KEY,STAGING_ADMIN_EMAIL,STAGING_ADMIN_PASSWORD
+          node scripts/staging/seed.mjs
+
+  placeholder:
+    # Static placeholder only (scripts/staging/placeholder): no bindings, no secrets, no Supabase.
+    needs: authorize
+    if: inputs.mode == 'deploy-staging-placeholder'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: staging-deploy
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          ref: ${{ needs.authorize.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies (no secrets in this step)
+        run: npm ci --no-audit --no-fund
+      - name: Build and check the placeholder
+        run: |
+          set -euo pipefail
+          (cd scripts/staging/placeholder && npx vite build)
+          node scripts/staging/check-build-config.mjs --target placeholder
+      - name: Deploy the placeholder to mktbd-staging
+        working-directory: scripts/staging/placeholder
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_DEPLOY_TOKEN }}
+        run: |
+          set -euo pipefail
+          node ../check.mjs --env --require CLOUDFLARE_API_TOKEN,CLOUDFLARE_ACCOUNT_ID
+          npx cf deploy --prebuilt
+          echo "Placeholder deployed. Enable Cloudflare Access on mktbd-staging's workers.dev route, then run deploy-staging." >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    needs: authorize
+    if: inputs.mode == 'deploy-staging'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: staging-deploy
+    env:
+      STAGING_REF_CONFIRM: ${{ inputs.staging_ref }}
+      STAGING_SUPABASE_URL: ${{ vars.STAGING_SUPABASE_URL }}
+      STAGING_SUPABASE_ANON_KEY: ${{ vars.STAGING_SUPABASE_ANON_KEY }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      BASE: https://mktbd-staging.${{ vars.CLOUDFLARE_WORKERS_SUBDOMAIN }}.workers.dev
+      # Build inputs at job level, so any step that re-reads cloudflare.config.ts sees the same target.
+      DEPLOY_TARGET: staging
+      SITE_ENV: preview
+      DEPLOY_PLATFORM: cloudflare
+      NEXT_PUBLIC_SUPABASE_URL: ${{ vars.STAGING_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.STAGING_SUPABASE_ANON_KEY }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          ref: ${{ needs.authorize.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies (no secrets in this step)
+        run: npm ci --no-audit --no-fund
+      - name: Isolation gate (anon identity; no database credentials in this job)
+        env:
+          PRODUCTION_REF: ${{ secrets.PRODUCTION_SUPABASE_REF }}
+        run: node scripts/staging/check.mjs --anon --require PRODUCTION_REF,STAGING_REF_CONFIRM,STAGING_SUPABASE_URL,STAGING_SUPABASE_ANON_KEY,CLOUDFLARE_ACCOUNT_ID
+      - name: Access gate (the application is never uploaded to an unprotected origin)
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: node scripts/staging/check.mjs --access "$BASE" --require CF_ACCESS_CLIENT_ID,CF_ACCESS_CLIENT_SECRET
+      - name: Build the staging Worker and check it before upload
+        env:
+          PRODUCTION_REF: ${{ secrets.PRODUCTION_SUPABASE_REF }}
+        run: |
+          set -euo pipefail
+          npm run build:vinext
+          node scripts/staging/check-build-config.mjs --target staging
+          echo "### Staging deploy" >> "$GITHUB_STEP_SUMMARY"
+          node scripts/staging/bundle-size.mjs --budget-kib "$WORKER_BUDGET_KIB" --summary "$GITHUB_STEP_SUMMARY"
+      - name: Deploy the staging Worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_DEPLOY_TOKEN }}
+          PRODUCTION_REF: ${{ secrets.PRODUCTION_SUPABASE_REF }}
+        run: |
+          set -euo pipefail
+          node scripts/staging/check.mjs --env --require CLOUDFLARE_API_TOKEN
+          # --skip-build: upload exactly the build checked in the previous step.
+          npx vinext-cloudflare deploy --skip-build
+          echo "Reminder: the Worker secret SUPABASE_SERVICE_ROLE_KEY (staging value) is set in the Cloudflare dashboard, not here." >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify the deployed application (Access + staging banner + noindex)
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          for i in 1 2 3 4 5 6; do
+            node scripts/staging/check.mjs --site "$BASE" && exit 0
+            sleep 10
+          done
+          exit 1
+
+  test:
+    needs: authorize
+    if: inputs.mode == 'test-staging'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: staging-test
+    env:
+      STAGING_REF_CONFIRM: ${{ inputs.staging_ref }}
+      STAGING_SUPABASE_URL: ${{ vars.STAGING_SUPABASE_URL }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      STAGING_ADMIN_EMAIL: ${{ vars.STAGING_ADMIN_EMAIL }}
+      BASE: https://mktbd-staging.${{ vars.CLOUDFLARE_WORKERS_SUBDOMAIN }}.workers.dev
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          ref: ${{ needs.authorize.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies and Playwright (CI only; no secrets in this step)
+        run: |
+          npm ci --no-audit --no-fund
+          npm install --no-save --no-audit --no-fund playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Isolation gate (refs + Access + staging site)
+        env:
+          PRODUCTION_REF: ${{ secrets.PRODUCTION_SUPABASE_REF }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          CLOUDFLARE_ANALYTICS_TOKEN: ${{ secrets.CLOUDFLARE_ANALYTICS_TOKEN }}
+          STAGING_ADMIN_PASSWORD: ${{ secrets.STAGING_ADMIN_PASSWORD }}
+        run: |
+          node scripts/staging/check.mjs --env --require PRODUCTION_REF,STAGING_REF_CONFIRM,STAGING_SUPABASE_URL,CF_ACCESS_CLIENT_ID,CF_ACCESS_CLIENT_SECRET,CLOUDFLARE_ANALYTICS_TOKEN,CLOUDFLARE_ACCOUNT_ID,STAGING_ADMIN_EMAIL,STAGING_ADMIN_PASSWORD
+          node -e 'import("./scripts/staging/isolation.mjs").then((m) => m.checkRefs(process.env))'
+          node scripts/staging/check.mjs --site "$BASE"
+      - name: Cold (right after deploy)
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          CLOUDFLARE_ANALYTICS_TOKEN: ${{ secrets.CLOUDFLARE_ANALYTICS_TOKEN }}
+        run: node scripts/staging/measure.mjs "$BASE" --phase cold --out "$RUNNER_TEMP/cold.json"
+      # The browser round runs before the warm phases: their order POSTs use up this runner IP's
+      # 5-per-hour order window, and the browser round needs a fresh one (201, 200, 409, ..., 429 at #6).
+      # Re-running test-staging within 60 minutes of a run that stopped before the soak fails that check.
+      - name: Browser round (page views, admin/CMS, orders, freshness)
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          STAGING_ADMIN_PASSWORD: ${{ secrets.STAGING_ADMIN_PASSWORD }}
+        run: node scripts/staging/browser-round.mjs "$BASE" --out "$RUNNER_TEMP/browser.json"
+        continue-on-error: true
+      - name: Warm 1
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          CLOUDFLARE_ANALYTICS_TOKEN: ${{ secrets.CLOUDFLARE_ANALYTICS_TOKEN }}
+        run: node scripts/staging/measure.mjs "$BASE" --phase warm --rounds 3 --out "$RUNNER_TEMP/warm1.json"
+      - name: Warm 2
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          CLOUDFLARE_ANALYTICS_TOKEN: ${{ secrets.CLOUDFLARE_ANALYTICS_TOKEN }}
+        run: node scripts/staging/measure.mjs "$BASE" --phase warm --rounds 3 --out "$RUNNER_TEMP/warm2.json"
+      - name: Soak (30 min, low rate)
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          CLOUDFLARE_ANALYTICS_TOKEN: ${{ secrets.CLOUDFLARE_ANALYTICS_TOKEN }}
+        run: node scripts/staging/measure.mjs "$BASE" --phase soak --minutes 30 --out "$RUNNER_TEMP/soak.json"
+      - name: Evaluate (pass/fail; CPU and volume reported for cost planning)
+        env:
+          # Free-text values reach the shell only as environment variables, never interpolated into the script.
+          DAILY_VIEWS: ${{ vars.EXPECTED_DAILY_PAGEVIEWS }}
+        run: |
+          set -o pipefail
+          node scripts/staging/evaluate.mjs --measure "$RUNNER_TEMP"/cold.json "$RUNNER_TEMP"/warm1.json "$RUNNER_TEMP"/warm2.json "$RUNNER_TEMP"/soak.json \
+            --browser "$RUNNER_TEMP/browser.json" --daily-views "$DAILY_VIEWS" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Keep aggregate results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-results
+          path: ${{ runner.temp }}/*.json
+          retention-days: 14
+
+  production-build-check:
+    # Builds the PRODUCTION Worker shape with no credential and a dummy project ref (nothing is uploaded
+    # or deployed) to prove it compiles, matches the production config and fits the size budget.
+    needs: authorize
+    if: inputs.mode == 'production-build-check'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          ref: ${{ needs.authorize.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Build and check the production Worker (no upload)
+        run: |
+          set -euo pipefail
+          node scripts/staging/check.mjs --env
+          dummy=buildcheck0000000000
+          export DEPLOY_TARGET=production SITE_ENV=production DEPLOY_PLATFORM=cloudflare PRODUCTION_REF="$dummy"
+          export NEXT_PUBLIC_SUPABASE_URL="https://${dummy}.supabase.co" NEXT_PUBLIC_SUPABASE_ANON_KEY=build-check-not-a-key
+          npm run build:vinext
+          node scripts/staging/check-build-config.mjs --target production
+          echo "### Production build check (not deployed)" >> "$GITHUB_STEP_SUMMARY"
+          node scripts/staging/bundle-size.mjs --budget-kib "$WORKER_BUDGET_KIB" --summary "$GITHUB_STEP_SUMMARY"
