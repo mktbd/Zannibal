@@ -26,6 +26,9 @@ jobs:
   migrate:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Production Supabase credentials live only in this protected environment
+    # (deployment branch: main only; required reviewer). No other workflow binds it.
+    environment: supabase-production
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
@@ -54,6 +57,11 @@ jobs:
       # Counts that must all be 0 before the migration may be applied.
       PREFLIGHT_BLOCKING: duplicate_transaction_groups orders_with_duplicate_transaction customer_name_over_120 customer_email_over_254 bkash_number_over_32 transaction_number_over_40
     steps:
+      - name: Refuse anything but main
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          [ "$REF" = refs/heads/main ] || { echo "::error::Run this workflow from main."; exit 1; }
       - name: Validate mode
         env:
           MODE: ${{ inputs.mode }}
