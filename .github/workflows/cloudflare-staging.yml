@@ -32,10 +32,10 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "migrate-staging | seed-staging | deploy-staging-placeholder (static page only; first deploy) | deploy-staging (application; refuses unless Cloudflare Access is enforcing) | test-staging (cold, browser, warm x2, soak, evaluate) | production-build-check (no credentials, no upload)"
+        description: "migrate-staging | seed-staging | deploy-staging-placeholder (static page only; first deploy) | deploy-staging (application; refuses unless Cloudflare Access is enforcing) | test-staging (cold, browser, warm x2, soak, evaluate) | production-build-check (no credentials, no upload) | diagnose-staging-db (TEMPORARY: read-only SELECT 1, TLS required, categories only)"
         required: true
         type: choice
-        options: [migrate-staging, seed-staging, deploy-staging-placeholder, deploy-staging, test-staging, production-build-check]
+        options: [migrate-staging, seed-staging, deploy-staging-placeholder, deploy-staging, test-staging, production-build-check, diagnose-staging-db]
       staging_sha:
         description: "Full 40-character commit SHA of cloudflare-staging to run; must equal the approved revision (repository variable CLOUDFLARE_STAGING_APPROVED_SHA)"
         required: true
@@ -155,6 +155,31 @@ jobs:
         run: |
           node scripts/staging/check.mjs --env --require STAGING_SUPABASE_SERVICE_ROLE_KEY,STAGING_ADMIN_EMAIL,STAGING_ADMIN_PASSWORD
           node scripts/staging/seed.mjs
+
+  db-diagnose:
+    # TEMPORARY (05E-B2F): read-only SELECT 1 against the staging database with TLS required; prints
+    # sanitized status and one error category only. Remove once migrate-staging has succeeded.
+    # No setup-node / npm ci: both scripts use Node built-ins only, so no third-party code runs here.
+    needs: authorize
+    if: inputs.mode == 'diagnose-staging-db'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: staging-db
+    env:
+      STAGING_REF_CONFIRM: ${{ inputs.staging_ref }}
+      STAGING_SUPABASE_URL: ${{ vars.STAGING_SUPABASE_URL }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          ref: ${{ needs.authorize.outputs.sha }}
+          persist-credentials: false
+      - name: Diagnose the staging database connection (read-only SELECT 1; TLS required; categories only)
+        env:
+          PRODUCTION_REF: ${{ secrets.PRODUCTION_SUPABASE_REF }}
+          STAGING_DB_URL: ${{ secrets.STAGING_DB_URL }}
+        run: |
+          node scripts/staging/check.mjs --env --require PRODUCTION_REF,STAGING_REF_CONFIRM,STAGING_SUPABASE_URL,STAGING_DB_URL
+          node scripts/staging/db-diagnose.mjs
 
   placeholder:
     # Static placeholder only (scripts/staging/placeholder): no bindings, no secrets, no Supabase.
