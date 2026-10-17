@@ -55,6 +55,7 @@ test("staging workflow: each job uses only its own environment's secrets", () =>
     deploy: { environment: "staging-deploy", secrets: ["CF_ACCESS_CLIENT_ID", "CF_ACCESS_CLIENT_SECRET", "CLOUDFLARE_DEPLOY_TOKEN", "PRODUCTION_SUPABASE_REF"] },
     test: { environment: "staging-test", secrets: ["CF_ACCESS_CLIENT_ID", "CF_ACCESS_CLIENT_SECRET", "CLOUDFLARE_ANALYTICS_TOKEN", "PRODUCTION_SUPABASE_REF", "STAGING_ADMIN_PASSWORD"] },
     "production-build-check": { environment: null, secrets: [] },
+    "db-diagnose": { environment: "staging-db", secrets: ["PRODUCTION_SUPABASE_REF", "STAGING_DB_URL"] },
   };
   assert.deepEqual(Object.keys(jobs).sort(), Object.keys(expected).sort());
   for (const [id, want] of Object.entries(expected)) {
@@ -120,7 +121,7 @@ test("staging workflow: no production credential names; every job checks setting
     assert.match(text, /node (scripts\/staging\/|\.\.\/)check\.mjs/, `${id} has an isolation gate`);
   }
   // The first gate of each job that uses staging settings fails on any missing one.
-  for (const id of ["database", "placeholder", "deploy", "test"]) {
+  for (const id of ["database", "placeholder", "deploy", "test", "db-diagnose"]) {
     const first = jobs[id].split("\n").find((l) => /check\.mjs/.test(l)) ?? "";
     assert.match(first, /--require [A-Z_,]+/, `${id}: first gate checks required settings`);
   }
@@ -128,6 +129,7 @@ test("staging workflow: no production credential names; every job checks setting
   // Gates run before the work they protect.
   const before = (id, gate, work) => assert.ok(jobs[id].indexOf(gate) >= 0 && jobs[id].indexOf(gate) < jobs[id].indexOf(work), `${id}: ${gate} before ${work}`);
   before("database", "check.mjs --db", "supabase db push");
+  before("db-diagnose", "check.mjs --env --require", "db-diagnose.mjs");
   before("database", "check.mjs --db", "node scripts/staging/seed.mjs");
   before("placeholder", "check.mjs --env --require CLOUDFLARE_API_TOKEN", "npx cf deploy");
   before("deploy", "check.mjs --anon", "npm run build:vinext");
@@ -152,4 +154,19 @@ test("staging workflow: no production deployment, and the production build check
   assert.doesNotMatch(p, /cf deploy|vinext-cloudflare deploy|CLOUDFLARE_API_TOKEN|secrets\./);
   assert.match(p, /dummy=buildcheck0000000000/);
   assert.doesNotMatch(workflow, /DEPLOY_TARGET:\s*production/);
+});
+
+test("staging workflow: the temporary database diagnostic is read-only, TLS-only and runs no third-party code", () => {
+  const d = jobs["db-diagnose"];
+  assert.match(d, /^ {4}if: inputs\.mode == 'diagnose-staging-db'\s*$/m);
+  const code = d.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
+  assert.doesNotMatch(code, /setup-node|npm ci|npm install|upload-artifact|supabase db|mark-staging|seed\.mjs|psql/, "only the two built-in-only scripts run");
+  const script = readFileSync(new URL("../../scripts/staging/db-diagnose.mjs", import.meta.url), "utf8");
+  const sql = [...script.matchAll(/"-c",\s*"([^"]*)"/g)].map((m) => m[1]);
+  assert.deepEqual(sql, ["select 1"], "exactly one statement, select 1");
+  assert.match(script, /searchParams\.set\("sslmode", "require"\)/, "sslmode=require forced in the connection URL");
+  assert.match(script, /PGSSLMODE: "require"/, "and in the environment");
+  assert.doesNotMatch(script, /sslmode", "(prefer|allow|disable)"|PGSSLMODE: "(prefer|allow|disable)"/, "no unencrypted fallback");
+  assert.match(script, /checkRefs\(env, \{ requireDb: true \}\)/, "same isolation proof as the migrate gate");
+  assert.doesNotMatch(script, /(say|console\.log|process\.stdout\.write)\([^)]*\b(raw|password|host|user|conn\.href|r\.stderr|u\.href)\b[^)]*\)/, "never prints connection details or raw errors");
 });
