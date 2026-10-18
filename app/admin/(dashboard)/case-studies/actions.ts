@@ -45,7 +45,8 @@ function revalidateCaseStudyViews(id?: string) {
     revalidatePath(`/admin/case-studies/${id}/preview`);
   }
   revalidatePath("/case-studies");
-  revalidatePath("/case-studies/[slug]", "page");
+  // Route patterns must include the (public) route group: page cache tags are built from it.
+  revalidatePath("/(public)/case-studies/[slug]", "page");
   revalidatePath("/");
 }
 

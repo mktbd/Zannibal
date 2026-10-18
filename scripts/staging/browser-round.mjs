@@ -22,7 +22,7 @@ const LOGIN_PATH = "/admin/login";
 const LOGIN_ERRORS = ["invalid_credentials", "unauthorized", "missing_fields"];
 const ADMIN_PAGES = ["/admin", "/admin/analysis", "/admin/articles", "/admin/case-studies", "/admin/orders", "/admin/tags"];
 // Checks that need a signed-in admin; recorded as failures (never passes) when login fails.
-const ADMIN_DEPENDENT = [...ADMIN_PAGES.map((p) => `admin page ${p}`), "order status change (Pending -> Invalid)", "CMS edit visible on the public page within 60 s", "CMS title restored", "cover upload reaches Storage"];
+const ADMIN_DEPENDENT = [...ADMIN_PAGES.map((p) => `admin page ${p}`), "order status change (Pending -> Invalid)", "CMS edit saved (title persisted)", "CMS edit visible on the public page within 60 s", "CMS title restored (saved value)", "cover upload reaches Storage"];
 // Headers the app sets on its own responses (lib/security-headers.ts). Used only as a fingerprint.
 const WORKER_HEADERS = ["content-security-policy", "x-content-type-options", "x-frame-options", "referrer-policy", "cross-origin-opener-policy", "permissions-policy"];
 
@@ -46,7 +46,7 @@ async function fingerprint(res) {
     status: res.status,
     appJson: /application\/json/i.test(res.headers.get("content-type") || "") && !!json && typeof json.error === "string",
     error: json && typeof json.error === "string" ? json.error : null,
-    workerHeaders: WORKER_HEADERS.filter((h) => res.headers.has(h)),
+    workerHeaders: Object.fromEntries(WORKER_HEADERS.filter((h) => res.headers.has(h)).map((h) => [h, res.headers.get(h)])),
     ray: res.headers.has("cf-ray"),
     // Edge error bodies are short public text; printable ASCII only, truncated.
     snippet: text.replace(/[^\x20-\x7e]+/g, " ").trim().slice(0, 60),
@@ -57,17 +57,20 @@ async function fingerprint(res) {
  * A 403 counts as a secure rejection only with evidence that it never reached the Worker. The
  * reference is the Worker's own 429 for the same route moments earlier (app JSON "rate_limited").
  * The 403 must not be app JSON (the route's own 403 is {"error":"forbidden"}), must carry none of
- * the security headers the reference carried, and must have passed through the Cloudflare edge.
+ * the security headers the reference carried with the same value (the app always sends its exact
+ * values; Cloudflare's own error pages reuse some names, e.g. X-Frame-Options: SAMEORIGIN), and
+ * must have passed through the Cloudflare edge.
  */
 function edgeRejection(reference, res) {
   const reasons = [];
   if (!(reference.status === 429 && reference.appJson && reference.error === "rate_limited")) reasons.push("no Worker reference response");
   if (res.status !== 403) reasons.push(`status ${res.status}`);
   if (res.appJson) reasons.push(`app JSON (${res.error})`);
-  const shared = reference.workerHeaders.filter((h) => res.workerHeaders.includes(h));
-  if (shared.length) reasons.push(`Worker headers present (${shared.join(", ")})`);
+  const shared = Object.keys(reference.workerHeaders).filter((h) => res.workerHeaders[h] === reference.workerHeaders[h]);
+  if (shared.length) reasons.push(`Worker header values present (${shared.map((h) => `${h}: ${res.workerHeaders[h]}`).join(", ")})`);
   if (!res.ray) reasons.push("no cf-ray");
-  const evidence = `403; app JSON no; Worker headers none of [${reference.workerHeaders.join(", ") || "none on reference"}]; cf-ray ${res.ray ? "yes" : "no"}; body "${res.snippet}"`;
+  const sameName = Object.keys(res.workerHeaders).filter((h) => h in reference.workerHeaders && !shared.includes(h));
+  const evidence = `403; app JSON no; no Worker header values${sameName.length ? ` (differ: ${sameName.map((h) => `${h}: ${res.workerHeaders[h]}`).join(", ")})` : ""}; cf-ray yes; body "${res.snippet}"`;
   return { ok: reasons.length === 0, detail: reasons.length ? `not proven edge-blocked: ${reasons.join("; ")}` : evidence };
 }
 
@@ -185,15 +188,42 @@ async function run() {
         if (await invalid.waitFor({ timeout: 30000 }).then(() => true, () => false)) { await invalid.click(); await page.waitForURL(/notice=invalid/, { timeout: 30000 }).catch(() => {}); }
       }
       check("order status change (Pending -> Invalid)", /notice=invalid/.test(page.url()), href ? pathOf(page.url()) : "order not listed");
-      // CMS edit -> public freshness (within 60 s), then restore.
+      // CMS edit -> saved -> public freshness (within 60 s); the original title is restored in a
+      // finally block and verified against the saved value, whatever happened in between.
       step = "CMS edit";
       await page.goto(BASE + "/admin/case-studies"); await page.getByRole("link", { name: /Staging Case Study 1:/ }).first().click();
-      await page.waitForURL(/\/edit/); const original = await page.inputValue("#title"); const marker = ` (fresh ${Date.now() % 100000})`;
-      await page.fill("#title", original + marker); await page.getByRole("button", { name: /^(Update|Save draft|Publish)$/ }).first().click(); await page.waitForURL(/notice=/, { timeout: 30000 }).catch(() => {});
-      let fresh = 0; for (let t = 0; t < 12 && !fresh; t++) { const html = await (await api("/case-studies/staging-case-study-1")).text(); if (html.includes(marker.trim())) fresh = (t + 1) * 5; else await sleep(5000); }
-      check("CMS edit visible on the public page within 60 s", fresh > 0, fresh ? `~${fresh}s` : "not seen");
-      await page.fill("#title", original); await page.getByRole("button", { name: /^(Update|Save draft|Publish)$/ }).first().click(); await page.waitForURL(/notice=/, { timeout: 30000 }).catch(() => {});
-      check("CMS title restored", (await page.inputValue("#title").catch(() => "")) === original);
+      await page.waitForURL(/\/edit/);
+      const editUrl = BASE + pathOf(page.url()); // without ?notice=, so each save's redirect is a real change
+      const savedTitle = async () => { await page.goto(editUrl); return page.inputValue("#title"); };
+      const saveTitle = async (value) => {
+        await page.goto(editUrl); await page.fill("#title", value);
+        await Promise.all([page.waitForURL((u) => u.searchParams.has("notice"), { timeout: 30000 }).catch(() => {}), page.getByRole("button", { name: /^(Update|Save draft|Publish)$/ }).first().click()]);
+      };
+      const loaded = await page.inputValue("#title");
+      // A marker left by an earlier interrupted run is removed here and restored away below.
+      const original = loaded.replace(/(?: \(fresh \d+\))+$/, "");
+      check("CMS starting title has no leftover test marker", loaded === original, loaded === original ? "" : "an earlier run left a marker; restoring the original below");
+      const marker = ` (fresh ${Date.now() % 100000})`;
+      try {
+        await saveTitle(original + marker);
+        const persisted = (await savedTitle()) === original + marker;
+        check("CMS edit saved (title persisted)", persisted, persisted ? "" : "saved value unchanged");
+        if (persisted) {
+          let fresh = 0; for (let t = 0; t < 12 && !fresh; t++) { const html = await (await api("/case-studies/staging-case-study-1")).text(); if (html.includes(marker.trim())) fresh = (t + 1) * 5; else await sleep(5000); }
+          check("CMS edit visible on the public page within 60 s", fresh > 0, fresh ? `~${fresh}s` : "not seen");
+        } else check("CMS edit visible on the public page within 60 s", false, "not run: the edit was not saved");
+      } finally {
+        const interrupted = step; // an error from the edit/poll above is reported against its own step
+        step = "CMS restore";
+        let restored = false;
+        try {
+          if ((await savedTitle()) !== original) await saveTitle(original);
+          restored = (await savedTitle()) === original;
+        } catch {}
+        if (!restored) console.error("CLEANUP FAILED: Staging Case Study 1 may still carry the test marker; restore its title in the admin.");
+        check("CMS title restored (saved value)", restored, restored ? "" : "CLEANUP FAILED: saved title is not the original");
+        step = interrupted;
+      }
       // Cover upload to staging Storage (a small generated image).
       step = "cover upload";
       const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
