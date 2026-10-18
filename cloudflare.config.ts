@@ -54,7 +54,15 @@ export default defineConfig({
     workersDev: !production,
     previewUrls: false,
     // Workers Logs: per-invocation CPU time, outcome and errors (included in Paid up to the monthly quota).
-    observability: { enabled: true, logs: { enabled: true, invocationLogs: true } },
+    // Spelled out to match the dashboard's settings exactly, so cf deploy's strict drift check sees no
+    // change: top-level `enabled` stays false (the dashboard has no switch for it); logs are on via
+    // logs.enabled; traces and issue detection are off.
+    observability: {
+      enabled: false,
+      logs: { enabled: true, headSamplingRate: 1, invocationLogs: true, persist: true },
+      traces: { enabled: false },
+      issues: { enabled: false },
+    },
     assets: { notFoundHandling: "none" },
     env: {
       ...cache.env,
