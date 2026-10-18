@@ -22,7 +22,7 @@ const LOGIN_PATH = "/admin/login";
 const LOGIN_ERRORS = ["invalid_credentials", "unauthorized", "missing_fields"];
 const ADMIN_PAGES = ["/admin", "/admin/analysis", "/admin/articles", "/admin/case-studies", "/admin/orders", "/admin/tags"];
 // Checks that need a signed-in admin; recorded as failures (never passes) when login fails.
-const ADMIN_DEPENDENT = [...ADMIN_PAGES.map((p) => `admin page ${p}`), "order status change (Pending -> Invalid)", "CMS edit saved (title persisted)", "CMS edit visible on the public page within 60 s", "CMS title restored (saved value)", "cover upload reaches Storage"];
+const ADMIN_DEPENDENT = [...ADMIN_PAGES.map((p) => `admin page ${p}`), "order status change (Pending -> Invalid)", "CMS edit saved (title persisted)", "CMS edit visible on the public page within 60 s", "CMS title restored (saved value)", "cover upload reaches Storage", "temporary cover upload deleted from Storage"];
 // Headers the app sets on its own responses (lib/security-headers.ts). Used only as a fingerprint.
 const WORKER_HEADERS = ["content-security-policy", "x-content-type-options", "x-frame-options", "referrer-policy", "cross-origin-opener-policy", "permissions-policy"];
 
@@ -37,6 +37,17 @@ const check = (name, ok, detail = "") => { checks.push({ name, ok: !!ok, detail:
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const api = (path, init = {}) => fetch(BASE + path, { redirect: "manual", ...init, headers: { ...ACCESS, ...(init.headers || {}) } });
 const pathOf = (url) => { try { return new URL(url).pathname; } catch { return ""; } };
+// Diagnostics never carry credentials: paths only (no query), IDs and long tokens replaced, short text.
+const redactPath = (p) => p.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "<id>").replace(/[A-Za-z0-9_-]{32,}/g, "<token>");
+const redactText = (t) => String(t || "").replace(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/g, "<jwt>").replace(/[^\s@]+@[^\s@]+\.[a-z]{2,}/gi, "<email>").replace(/[A-Za-z0-9_-]{32,}/g, "<token>").replace(/\s+/g, " ").trim().slice(0, 120);
+/**
+ * Resolves once React has attached its props to the element, i.e. the element is hydrated and its
+ * handlers are live. Polled per animation frame by the browser (no fixed sleep). Server-rendered
+ * controls exist before hydration, and an event fired then is dropped (run #19's cover upload).
+ */
+const interactive = (page, selector, timeout = 15000) =>
+  page.waitForFunction((sel) => { const el = document.querySelector(sel); return !!el && Object.keys(el).some((k) => k.startsWith("__reactProps$")); }, selector, { timeout, polling: "raf" }).then(() => true, () => false);
+const THROTTLE = args.includes("--throttle");
 
 /** What a response reveals about its origin: app JSON body, app security headers, edge ray id. */
 async function fingerprint(res) {
@@ -76,6 +87,9 @@ function edgeRejection(reference, res) {
 
 let browser = null, step = "start";
 let pageStats = [], requestsPerView = null;
+const diagnostics = [];
+let cancelledRequests = 0;
+const note = (entry) => { if (diagnostics.length < 60) diagnostics.push({ step, ...entry }); };
 
 async function run() {
   step = "isolation gate";
@@ -92,9 +106,29 @@ async function run() {
     return route.continue();
   });
 
+  // Sanitized browser diagnostics: failed requests, server errors, console errors, page errors.
+  const where = (url) => { try { const u = new URL(url); return u.origin === origin ? "site" : /supabase/.test(u.hostname) ? "supabase" : "other"; } catch { return "other"; } };
+  // net::ERR_ABORTED is the browser cancelling prefetches/images when the test navigates on; counted, not listed.
+  context.on("requestfailed", (r) => {
+    const error = r.failure()?.errorText || "";
+    if (/ERR_ABORTED/.test(error)) { cancelledRequests++; return; }
+    note({ kind: "request failed", method: r.method(), where: where(r.url()), path: redactPath(pathOf(r.url())), error: redactText(error) });
+  });
+  context.on("response", (r) => { if (r.status() >= 500) note({ kind: "server error", method: r.request().method(), where: where(r.url()), path: redactPath(pathOf(r.url())), status: r.status() }); });
+
   // ---- A. page views: Worker requests per view and page weight
   step = "page views";
   const page = await context.newPage();
+  page.on("console", (m) => { if (m.type() === "error") note({ kind: "console error", text: redactText(m.text()) }); });
+  page.on("pageerror", (e) => note({ kind: "page error", text: redactText(e.name + ": " + e.message) }));
+  if (THROTTLE) {
+    // Production-like client: 4x slower CPU and a slow 4G-class network (local QA only).
+    const cdp = await context.newCDPSession(page);
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: 4 });
+    await cdp.send("Network.enable");
+    await cdp.send("Network.emulateNetworkConditions", { offline: false, latency: 100, downloadThroughput: (4 * 1024 * 1024) / 8, uploadThroughput: (1.5 * 1024 * 1024) / 8 });
+    console.log("   (browser throttled: CPU x4, 4 Mbit/s down, 1.5 Mbit/s up, 100 ms latency)");
+  }
   const cs = [...(await (await api("/case-studies")).text()).matchAll(/href="\/case-studies\/([a-z0-9-]+)"/g)].map((m) => m[1])[0];
   const an = ((await (await api("/api/analysis")).json().catch(() => ({}))).items || [])[0]?.slug;
   const ar = [...(await (await api("/articles")).text()).matchAll(/href="\/articles\/([a-z0-9-]+)"/g)].map((m) => m[1])[0];
@@ -224,11 +258,39 @@ async function run() {
         check("CMS title restored (saved value)", restored, restored ? "" : "CLEANUP FAILED: saved title is not the original");
         step = interrupted;
       }
-      // Cover upload to staging Storage (a small generated image).
+      // Cover upload to staging Storage (a small generated image), never saved to the Case Study, then
+      // deleted through the CMS's own discard path and verified gone from the public URL.
       step = "cover upload";
       const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
-      await page.setInputFiles("#cover-file", { name: "cover.png", mimeType: "image/png", buffer: png }).catch(() => {});
-      check("cover upload reaches Storage", await page.getByText(/New cover/).first().waitFor({ timeout: 30000 }).then(() => true, () => false));
+      const isUpload = (r) => r.request().method() === "POST" && /\/storage\/v1\/object\/editorial-media\//.test(r.url());
+      if (!(await interactive(page, "#cover-file"))) {
+        check("cover upload reaches Storage", false, "test: the upload control never became interactive (15 s)");
+      } else {
+        const uploadResponse = page.waitForResponse(isUpload, { timeout: 30000 }).catch(() => null);
+        await page.setInputFiles("#cover-file", { name: "cover.png", mimeType: "image/png", buffer: png });
+        const up = await uploadResponse;
+        const shown = up?.ok() ? await page.getByText(/New cover/).first().waitFor({ timeout: 15000 }).then(() => true, () => false) : false;
+        const alert = await page.getByRole("alert").first().textContent({ timeout: 1000 }).catch(() => null);
+        const why = [up ? `POST ${up.status()}` : "no upload request sent", alert ? `alert "${redactText(alert)}"` : "", up?.ok() && !shown ? "preview not shown" : ""].filter(Boolean).join("; ");
+        check("cover upload reaches Storage", up?.status() === 200 && shown, why);
+        if (up?.ok()) {
+          step = "cover cleanup";
+          const u = new URL(up.url());
+          const publicUrl = `${u.origin}/storage/v1/object/public/editorial-media/${u.pathname.split("/storage/v1/object/editorial-media/")[1]}`;
+          let deleted = false, detail = "";
+          try {
+            const isDelete = (r) => r.request().method() === "DELETE" && /\/storage\/v1\/object\/editorial-media(?:[/?]|$)/.test(r.url());
+            const deleteResponse = page.waitForResponse(isDelete, { timeout: 15000 }).catch(() => null);
+            await page.getByRole("button", { name: "Remove cover" }).click({ timeout: 10000 });
+            const del = await deleteResponse;
+            const after = (await fetch(publicUrl, { method: "GET" }).catch(() => null))?.status ?? "no response";
+            deleted = del?.status() === 200 && (after === 400 || after === 404);
+            detail = `DELETE ${del ? del.status() : "not sent"}; public URL now ${after}`;
+          } catch (e) { detail = `cleanup error (${e?.name || "Error"})`; }
+          if (!deleted) console.error("CLEANUP FAILED: a temporary test cover may remain in Storage under the Staging Case Study 1 prefix.");
+          check("temporary cover upload deleted from Storage", deleted, deleted ? detail : `CLEANUP FAILED: ${detail}`);
+        }
+      }
     }
   } else console.log("   (admin/CMS steps skipped: no staging admin credentials)");
   step = "done";
@@ -239,8 +301,13 @@ function writeResults() {
   written = true;
   // Error name and step only: messages can echo URLs, selectors or typed values.
   if (aborted) check("browser round completed", false, `aborted during ${aborted.step} (${aborted.error}); later checks did not run`);
-  const out = { checks, pageStats, requestsPerView: Number.isFinite(requestsPerView) ? requestsPerView : null, aborted, failed: checks.filter((c) => !c.ok).map((c) => c.name) };
-  console.log(`\n${checks.filter((c) => c.ok).length} passed, ${out.failed.length} failed; Worker requests per page view: ${out.requestsPerView === null ? "not measured" : out.requestsPerView.toFixed(1)}`);
+  const out = { checks, pageStats, requestsPerView: Number.isFinite(requestsPerView) ? requestsPerView : null, aborted, throttled: THROTTLE, diagnostics, cancelledRequests, failed: checks.filter((c) => !c.ok).map((c) => c.name) };
+  if (diagnostics.length) {
+    console.log(`\nBrowser diagnostics (${diagnostics.length}, sanitized):`);
+    for (const d of diagnostics.slice(0, 20)) console.log(`   [${d.step}] ${d.kind}${d.method ? ` ${d.method}` : ""}${d.where ? ` ${d.where}` : ""}${d.path ? ` ${d.path}` : ""}${d.status ? ` ${d.status}` : ""}${d.error ? ` (${d.error})` : ""}${d.text ? `: ${d.text}` : ""}`);
+  }
+  console.log(`\nBrowser diagnostics: ${diagnostics.length} recorded; ${cancelledRequests} cancelled requests (navigation, not errors).`);
+  console.log(`${checks.filter((c) => c.ok).length} passed, ${out.failed.length} failed; Worker requests per page view: ${out.requestsPerView === null ? "not measured" : out.requestsPerView.toFixed(1)}`);
   if (OUT) { try { writeFileSync(OUT, JSON.stringify(out, null, 2)); } catch { console.error("browser round: could not write the result file"); return false; } }
   return out;
 }

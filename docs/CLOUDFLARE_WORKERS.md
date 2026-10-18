@@ -403,7 +403,7 @@ round gets a fresh per-IP order window.
    - admin login and six pages;
    - Pending → Invalid;
    - a CMS edit visible publicly within 60 s, then restored;
-   - a cover upload.
+   - a cover upload, then its deletion, verified at the public URL.
 
 The size budget is enforced at deploy. CPU percentiles and the monthly
 request and CPU projection are reported.
@@ -427,6 +427,43 @@ the environment.
 
 Production-mode Worker, isolation-gate and evaluator results are in the
 stage report.
+
+## 8a. Pre-deployment QA (required)
+
+**Rule:** a staging deployment is recommended only after Level 1 and
+Level 2 both pass on the exact commit to be deployed. Level 3 (staging
+smoke, Phase 2) then runs before the full `test-staging`.
+
+| Level | Command | What it proves | Time |
+|---|---|---|---|
+| 1. Static | `npm run qa:static` | lint, `next typegen` + `tsc`, unit tests, secret scan, staging workflow identical to main, staging build refuses the production URL, synthetic production and staging builds with `check-build-config` and the bundle budget | ~1 min |
+| 2. Local integration | `npm run qa:local` | the Worker on local workerd against a disposable local Supabase (real Postgres, RLS, Auth, Storage): the full browser round in a throttled Chromium (CPU ×4, 4 Mbit/s) | ~3 min |
+
+Both scripts first remove every credential-like environment variable.
+Level 1 builds with synthetic, non-existent Supabase refs. Level 2 runs
+the `mktbd-qa` stack: config generated from `supabase/config.toml` with
+ports 55xxx, refused if the workdir is linked to a hosted project, reset
+to the repo's migrations, marked `qa_disposable`, and seeded with
+synthetic fixtures and a random admin password. Its `LOCAL_TEST` build is
+deleted when the run ends. `.dev.vars` (local QA key only) is removed as
+soon as the Worker is up. Prerequisites: Docker running, `npm ci`,
+Playwright with Chromium.
+
+Level 2 cannot reproduce, so they stay for the staging tests: Cloudflare
+Access and edge behaviour (CF-Connecting-IP, edge error pages), global
+Workers Cache propagation, `global_fetch_strictly_public` (dropped by
+`LOCAL_TEST`), real latency, hosted-Supabase dashboard settings, and
+Cloudflare analytics.
+
+Throttling makes timing bugs more likely to show, not certain to.
+Interacting with a control before React hydrates it is the known case
+(staging run #19: no upload request was ever sent). The browser round
+waits for hydration (`interactive()`), and
+`tests/unit/browser-test-rules.test.mjs` fails any `setInputFiles`
+without that wait. Test uploads are deleted through the CMS discard path
+and verified gone. Diagnostics (failed requests, 5xx, console and page
+errors) are sanitized: paths without queries, with IDs, tokens, JWTs and
+emails redacted.
 
 ## 9. Before the first staging deployment
 
