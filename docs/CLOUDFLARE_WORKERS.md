@@ -462,6 +462,22 @@ Workers Cache propagation, `global_fetch_strictly_public` (dropped by
 `LOCAL_TEST`), real latency, hosted-Supabase dashboard settings, and
 Cloudflare analytics.
 
+**Security probes (Stage 3A, part of Level 2):** after the browser rounds,
+`scripts/qa/rls-probe.mjs` reads and writes every public table and the
+`editorial-media` bucket through the real PostgREST and Storage APIs as
+three identities: anonymous, a non-admin account created for the run, and
+the admin. Every refused write is checked against the database, so "no
+error" never passes for "no effect". `scripts/qa/auth-probe.mjs` covers
+these in a real browser, each refused save with an unchanged record:
+
+- logout, and replaying the signed-out session's cookies;
+- a non-admin account against admin pages and a Server Action;
+- an admin session revoked, or its cookie gone, mid-edit;
+- a control save with a valid admin session.
+
+Both use synthetic records only, remove them, and refuse anything but the
+local QA stack.
+
 Throttling makes timing bugs more likely to show, not certain to.
 Interacting with a control before React hydrates it is the known case
 (staging run #19: no upload request was ever sent). The browser round
