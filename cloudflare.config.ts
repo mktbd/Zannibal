@@ -5,9 +5,9 @@
 //               Access), SITE_ENV=preview (noindex, staging banner), the staging
 //               Supabase project, and the non-payable bKash placeholder.
 //   production  Worker "mktbd", SITE_ENV=production, the production Supabase
-//               project. No workers.dev URL and no route: a deployed production
-//               Worker is unreachable until a custom domain is attached in a
-//               separately approved stage. The CI workflow only build-checks it.
+//               project, served on the custom domains mktbd.co and www.mktbd.co
+//               only (no workers.dev URL, no route). Deployed by
+//               .github/workflows/cloudflare-production.yml.
 //
 // Build-time guard: the build throws unless SITE_ENV matches the target and the
 // Supabase URL is a hosted *.supabase.co project whose ref differs from
@@ -37,6 +37,8 @@ if (hosted) {
   throw new Error(`${target} build: NEXT_PUBLIC_SUPABASE_URL must be a hosted *.supabase.co project.`);
 }
 
+const PRODUCTION_DOMAINS = ["mktbd.co", "www.mktbd.co"];
+
 const cache = await createWorkersCacheConfig();
 
 export default defineConfig({
@@ -53,6 +55,10 @@ export default defineConfig({
     limits: { cpuMs: 1000 },
     workersDev: !production,
     previewUrls: false,
+    // Production custom domains, declared here so every deploy re-asserts exactly this set: with a list
+    // configured, cf deploy replaces the Worker's custom domains with it (a domain added only in the
+    // dashboard would be removed, so add it here instead). Staging has none (workers.dev behind Access).
+    domains: production ? PRODUCTION_DOMAINS : undefined,
     // Workers Logs: per-invocation CPU time, outcome and errors (included in Paid up to the monthly quota).
     // Spelled out to match the dashboard's settings exactly, so cf deploy's strict drift check sees no
     // change: top-level `enabled` stays false (the dashboard has no switch for it); logs are on via
