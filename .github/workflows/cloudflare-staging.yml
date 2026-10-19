@@ -32,10 +32,10 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "migrate-staging | seed-staging | deploy-staging-placeholder (static page only; first deploy) | deploy-staging (application; refuses unless Cloudflare Access is enforcing) | test-staging (cold, browser, warm x2, soak, evaluate) | production-build-check (no credentials, no upload) | diagnose-staging-db (TEMPORARY: read-only SELECT 1, TLS required, categories only)"
+        description: "migrate-staging | seed-staging | deploy-staging-placeholder (static page only; first deploy) | deploy-staging (application; refuses unless Cloudflare Access is enforcing) | smoke-staging (about 5 min: auth, headers, CMS edit/freshness/restore, cover upload/delete, order status; no order requests) | test-staging (cold, browser, warm x2, soak, evaluate; stops after the browser round if it fails) | production-build-check (no credentials, no upload)"
         required: true
         type: choice
-        options: [migrate-staging, seed-staging, deploy-staging-placeholder, deploy-staging, test-staging, production-build-check, diagnose-staging-db]
+        options: [migrate-staging, seed-staging, deploy-staging-placeholder, deploy-staging, smoke-staging, test-staging, production-build-check]
       staging_sha:
         description: "Full 40-character commit SHA of cloudflare-staging to run; must equal the approved revision (repository variable CLOUDFLARE_STAGING_APPROVED_SHA)"
         required: true
@@ -156,31 +156,6 @@ jobs:
           node scripts/staging/check.mjs --env --require STAGING_SUPABASE_SERVICE_ROLE_KEY,STAGING_ADMIN_EMAIL,STAGING_ADMIN_PASSWORD
           node scripts/staging/seed.mjs
 
-  db-diagnose:
-    # TEMPORARY (05E-B2F): read-only SELECT 1 against the staging database with TLS required; prints
-    # sanitized status and one error category only. Remove once migrate-staging has succeeded.
-    # No setup-node / npm ci: both scripts use Node built-ins only, so no third-party code runs here.
-    needs: authorize
-    if: inputs.mode == 'diagnose-staging-db'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    environment: staging-db
-    env:
-      STAGING_REF_CONFIRM: ${{ inputs.staging_ref }}
-      STAGING_SUPABASE_URL: ${{ vars.STAGING_SUPABASE_URL }}
-    steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
-        with:
-          ref: ${{ needs.authorize.outputs.sha }}
-          persist-credentials: false
-      - name: Diagnose the staging database connection (read-only SELECT 1; TLS required; categories only)
-        env:
-          PRODUCTION_REF: ${{ secrets.PRODUCTION_SUPABASE_REF }}
-          STAGING_DB_URL: ${{ secrets.STAGING_DB_URL }}
-        run: |
-          node scripts/staging/check.mjs --env --require PRODUCTION_REF,STAGING_REF_CONFIRM,STAGING_SUPABASE_URL,STAGING_DB_URL
-          node scripts/staging/db-diagnose.mjs
-
   placeholder:
     # Static placeholder only (scripts/staging/placeholder): no bindings, no secrets, no Supabase.
     needs: authorize
@@ -282,6 +257,66 @@ jobs:
           done
           exit 1
 
+  smoke:
+    # Short post-deploy check before the expensive full test: authentication, security headers and the
+    # staging identity, a CMS edit (saved, publicly visible within 60 s, restored), a cover upload to
+    # staging Storage (then deleted and verified gone), and the seeded order fixture's status change
+    # (restored; seed-staging writes the fixture directly to the database). It sends NO order request:
+    # the order rate limit counts every POST, so the full test's per-IP window stays fresh. Same
+    # environment, secrets and isolation gate as the full test.
+    needs: authorize
+    if: inputs.mode == 'smoke-staging'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: staging-test
+    env:
+      STAGING_REF_CONFIRM: ${{ inputs.staging_ref }}
+      STAGING_SUPABASE_URL: ${{ vars.STAGING_SUPABASE_URL }}
+      STAGING_ADMIN_EMAIL: ${{ vars.STAGING_ADMIN_EMAIL }}
+      BASE: https://mktbd-staging.${{ vars.CLOUDFLARE_WORKERS_SUBDOMAIN }}.workers.dev
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          ref: ${{ needs.authorize.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies and Playwright (CI only; no secrets in this step)
+        run: |
+          npm ci --no-audit --no-fund
+          npm install --no-save --no-audit --no-fund playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Isolation gate (refs + Access + staging site)
+        env:
+          PRODUCTION_REF: ${{ secrets.PRODUCTION_SUPABASE_REF }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          STAGING_ADMIN_PASSWORD: ${{ secrets.STAGING_ADMIN_PASSWORD }}
+        run: |
+          node scripts/staging/check.mjs --env --require PRODUCTION_REF,STAGING_REF_CONFIRM,STAGING_SUPABASE_URL,CF_ACCESS_CLIENT_ID,CF_ACCESS_CLIENT_SECRET,STAGING_ADMIN_EMAIL,STAGING_ADMIN_PASSWORD
+          node -e 'import("./scripts/staging/isolation.mjs").then((m) => m.checkRefs(process.env))'
+          node scripts/staging/check.mjs --site "$BASE"
+      - name: Smoke round (auth, headers, CMS, Storage upload/delete, order status)
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          STAGING_ADMIN_PASSWORD: ${{ secrets.STAGING_ADMIN_PASSWORD }}
+        run: |
+          set -o pipefail
+          node scripts/staging/browser-round.mjs "$BASE" --profile smoke --out "$RUNNER_TEMP/smoke.json" | tee "$RUNNER_TEMP/smoke.log"
+      - name: Summarize the smoke result
+        if: always()
+        run: |
+          { echo "### Staging smoke"; grep -E '^(PASS|FAIL)  |passed, ' "$RUNNER_TEMP/smoke.log" || echo "no smoke output"; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Keep smoke results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-smoke
+          path: ${{ runner.temp }}/smoke.json
+          retention-days: 14
+
   test:
     needs: authorize
     if: inputs.mode == 'test-staging'
@@ -327,13 +362,15 @@ jobs:
       # The browser round runs before the warm phases: their order POSTs use up this runner IP's
       # 5-per-hour order window, and the browser round needs a fresh one (201, 200, 409, ..., 429 at #6).
       # Re-running test-staging within 60 minutes of a run that stopped before the soak fails that check.
+      # Fail fast: a functional failure here fails the step, so Warm 1, Warm 2, Soak and Evaluate are
+      # skipped (about 35 minutes saved); the results are still kept below.
       - name: Browser round (page views, admin/CMS, orders, freshness)
+        id: browser
         env:
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
           STAGING_ADMIN_PASSWORD: ${{ secrets.STAGING_ADMIN_PASSWORD }}
         run: node scripts/staging/browser-round.mjs "$BASE" --out "$RUNNER_TEMP/browser.json"
-        continue-on-error: true
       - name: Warm 1
         env:
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
@@ -360,6 +397,14 @@ jobs:
           set -o pipefail
           node scripts/staging/evaluate.mjs --measure "$RUNNER_TEMP"/cold.json "$RUNNER_TEMP"/warm1.json "$RUNNER_TEMP"/warm2.json "$RUNNER_TEMP"/soak.json \
             --browser "$RUNNER_TEMP/browser.json" --daily-views "$DAILY_VIEWS" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Report a fail-fast stop
+        if: failure() && steps.browser.outcome == 'failure'
+        run: |
+          {
+            echo "### Staging test stopped early"
+            echo "A step failed, so the remaining performance phases did not run. Failed browser checks (names only):"
+            node -e 'try { const j = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); for (const n of j.failed || []) console.log("- " + n); } catch { console.log("- (no browser results)"); }' "$RUNNER_TEMP/browser.json"
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Keep aggregate results
         if: always()
         uses: actions/upload-artifact@v4

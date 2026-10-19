@@ -27,6 +27,28 @@ test("every setInputFiles on a client-side control is preceded by the readiness 
   }
 });
 
+test("the smoke profile sends no order request (it must not use up the full test's rate-limit window)", () => {
+  // Every order POST sits in the full-only orders section; the smoke order check only changes status.
+  const start = src.indexOf('if (SMOKE) console.log("   (smoke: no order requests');
+  const end = src.indexOf("// ---- D0.", start);
+  assert.ok(start > 0 && end > start, "orders section guarded by the smoke profile");
+  const orderPosts = [...src.matchAll(/api\("\/api\/orders"/g)].map((m) => m.index);
+  assert.ok(orderPosts.length >= 2, "expected the order and spoof helpers");
+  for (const at of orderPosts) assert.ok(at > start && at < end, "an order POST outside the full-only section");
+  const smokeFn = src.slice(src.indexOf("async function smokeOrderStatus"), src.indexOf("\nlet browser = null"));
+  assert.doesNotMatch(smokeFn, /\/api\/orders|order\(|spoof\(/, "the smoke order check sends no order request");
+  assert.match(smokeFn, /finally \{/, "the smoke status change is restored in a finally block");
+  assert.match(smokeFn, /CLEANUP FAILED/);
+});
+
+test("the smoke order fixture is written by the seed directly to the database, never via the order API", () => {
+  const seed = readFileSync(new URL("../../scripts/staging/seed.mjs", import.meta.url), "utf8");
+  assert.match(seed, /insert into public\.orders \(id,[^)]*\)[\s\S]*smoke\.fixture@example\.test[\s\S]*on conflict \(id\) do update set status = 'pending'/);
+  const code = seed.split("\n").filter((l) => !/^\s*\/\//.test(l)).join("\n");
+  assert.doesNotMatch(code, /\/api\/orders|fetch\(/, "the seed calls no HTTP order endpoint");
+  assert.match(src, /find\("smoke\.fixture@example\.test"\)/, "the smoke check prefers the seeded fixture");
+});
+
 test("the round never uses fixed waits for readiness", () => {
   assert.doesNotMatch(src, /waitForTimeout\(/);
 });

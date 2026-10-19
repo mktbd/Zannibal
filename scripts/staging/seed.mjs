@@ -8,7 +8,8 @@
 //
 // Creates fixed-ID fixtures (UUIDs starting 5ea00000-), replacing earlier seed rows only:
 // tags, published/draft Analyses with slides, Case Studies, Articles (one with an inline
-// image), one Analysis<->Article link, and the staging admin user. Images are generated
+// image), one Analysis<->Article link, one synthetic order for the smoke test, and the staging
+// admin user. Images are generated
 // here (no external files). Prints counts only -- never credentials or row data.
 import { randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
@@ -33,7 +34,7 @@ const ADMIN_PASSWORD = env.STAGING_ADMIN_PASSWORD || (LOCAL ? `local-${randomUUI
 if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(ADMIN_EMAIL) || ADMIN_PASSWORD.length < 16) fail("STAGING_ADMIN_EMAIL / STAGING_ADMIN_PASSWORD (16+ chars) are required.");
 
 const sb = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
-const id = (kind, n) => `5ea00000-0000-4000-8${kind}00-${String(n).padStart(12, "0")}`; // kind: 1 analysis, 2 case study, 3 article, 4 tag
+const id = (kind, n) => `5ea00000-0000-4000-8${kind}00-${String(n).padStart(12, "0")}`; // kind: 1 analysis, 2 case study, 3 article, 4 tag, 6 order
 const q = (v) => (v === null || v === undefined ? "null" : `'${String(v).replace(/'/g, "''")}'`);
 const day = (n) => new Date(Date.UTC(2026, 8, 30 - n)).toISOString().slice(0, 10);
 
@@ -50,7 +51,7 @@ async function upload(path, buf, type) {
 }
 
 (async () => {
-  // Remove earlier seed rows (fixed IDs only); orders and rate-limit counters are left alone.
+  // Remove earlier seed rows (fixed IDs only); test orders and rate-limit counters are left alone.
   psql(DB_URL, `begin;
     delete from public.analysis_article_links where analysis_id::text like '5ea00000-%' or article_id::text like '5ea00000-%';
     delete from public.analysis_tags where analysis_id::text like '5ea00000-%';
@@ -106,6 +107,14 @@ async function upload(path, buf, type) {
   psql(DB_URL, `insert into public.articles (id, title, slug, short_description, cover_image_path, body, publication_date, status) values ${articles.join(",")};`);
   psql(DB_URL, `insert into public.analysis_article_links (analysis_id, article_id, read_article_enabled) values (${q(id(1, 1))}, ${q(id(3, 1))}, true);`);
 
+  // Smoke-test order fixture: written directly to the database (never through POST /api/orders, so no
+  // rate-limit capacity is used). Upserted on its fixed ID so its order number stays stable; a re-seed
+  // resets it to Pending. The smoke test changes its status and restores it.
+  const cs1 = id(2, 1);
+  psql(DB_URL, `insert into public.orders (id, customer_name, customer_email, bkash_number, bkash_transaction_number, case_study_id, case_study_title_snapshot, price_bdt_snapshot, status)
+    select ${q(id(6, 1))}, 'Smoke Fixture', 'smoke.fixture@example.test', '01712345678', 'STGSMOKEFIXTURE0001', c.id, c.title, c.price_bdt, 'pending' from public.case_studies c where c.id = ${q(cs1)}
+    on conflict (id) do update set status = 'pending', case_study_id = excluded.case_study_id, case_study_title_snapshot = excluded.case_study_title_snapshot, price_bdt_snapshot = excluded.price_bdt_snapshot;`);
+
   // Staging admin user (password from a secret; never printed).
   const { data: list } = await sb.auth.admin.listUsers({ page: 1, perPage: 200 });
   const existing = list?.users?.find((u) => u.email === ADMIN_EMAIL);
@@ -115,6 +124,6 @@ async function upload(path, buf, type) {
   if (!userId) fail("could not create or update the staging admin user.");
   psql(DB_URL, `update public.profiles set role = 'admin' where id = ${q(userId)};`);
 
-  const counts = psql(DB_URL, "select (select count(*) from public.analyses where id::text like '5ea00000-%') || ' analyses, ' || (select count(*) from public.case_studies where id::text like '5ea00000-%') || ' case studies, ' || (select count(*) from public.articles where id::text like '5ea00000-%') || ' articles, ' || (select count(*) from public.analysis_slides where analysis_id::text like '5ea00000-%') || ' slides'");
+  const counts = psql(DB_URL, "select (select count(*) from public.analyses where id::text like '5ea00000-%') || ' analyses, ' || (select count(*) from public.case_studies where id::text like '5ea00000-%') || ' case studies, ' || (select count(*) from public.orders where id::text like '5ea00000-%') || ' order fixture, ' || (select count(*) from public.articles where id::text like '5ea00000-%') || ' articles, ' || (select count(*) from public.analysis_slides where analysis_id::text like '5ea00000-%') || ' slides'");
   console.log(`Seeded synthetic fixtures: ${counts}; staging admin ready.`);
 })().catch((e) => { console.error(`seed failed (${e.name})`); process.exit(2); });

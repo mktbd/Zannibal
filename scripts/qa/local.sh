@@ -5,9 +5,11 @@
 #
 # Runs the app as the Cloudflare Worker (vinext build on local workerd) against a DISPOSABLE local
 # Supabase stack (project "mktbd-qa", ports 553xx) with synthetic fixtures, then drives it with the
-# staging browser round in a throttled Chromium (CPU x4, slow 4G-class network). Throttling makes
-# timing bugs (e.g. acting on a control before hydration) more likely to show, not certain to; the
-# deterministic guard is tests/unit/browser-test-rules.test.mjs.
+# staging browser round (the smoke profile, then the full round) in a throttled Chromium (CPU x4, slow
+# 4G-class network). Throttling makes timing bugs (e.g. acting on a control before hydration)
+# more likely to show, not certain to; the deterministic guard is
+# tests/unit/browser-test-rules.test.mjs. The smoke round must leave the order rate-limit counters
+# unchanged (it sends no order request), or the run fails.
 #
 # Safety:
 #   - Every credential-like variable is removed from the environment first, so production or staging
@@ -123,14 +125,22 @@ rm -f .dev.vars
 echo "Worker answering on $BASE (.dev.vars removed)"
 unset QA_SERVICE_ROLE_KEY
 
-step "browser round (${THROTTLE:+throttled, }real local Supabase: DB, Auth, Storage, CMS, orders)"
+round() { STAGING_ADMIN_EMAIL=staging-admin@example.test STAGING_ADMIN_PASSWORD="$ADMIN_PASSWORD" node scripts/staging/browser-round.mjs "$BASE" "$@" $THROTTLE; }
+hits() { psql "$QA_DB_URL" -XtAc "select coalesce(sum(hits), 0) from public.order_rate_limits"; }
 set +e
-STAGING_ADMIN_EMAIL=staging-admin@example.test STAGING_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
-  node scripts/staging/browser-round.mjs "$BASE" --out "$OUT/browser.json" $THROTTLE
-code=$?
+# Same order as on staging (smoke, then full): the smoke round uses the seeded order fixture, and the
+# full round's "429 at exactly the 6th submission (fresh window)" check then proves the smoke round
+# left the per-IP order window untouched.
+step "smoke browser round (${THROTTLE:+throttled, }the staging smoke-staging profile)"
+before=$(hits); round --profile smoke --out "$OUT/smoke.json"; smoke=$?; after=$(hits)
+step "full browser round (${THROTTLE:+throttled, }real local Supabase: DB, Auth, Storage, CMS, orders)"
+round --out "$OUT/browser.json"; full=$?
 set -e
+if [ "$before" = "$after" ]; then echo "smoke sent no order request (rate-limit hits unchanged: $before)"; window=0
+else echo "FAIL  smoke changed the order rate-limit counters ($before -> $after): it must not use up the full test's window"; window=1; fi
 
 step "result"
-echo "results: $OUT/browser.json"
-if [ "$code" = 0 ]; then echo "LOCAL QA: PASS"; else echo "LOCAL QA: FAIL (exit $code)"; fi
-exit "$code"
+echo "results: $OUT/smoke.json, $OUT/browser.json"
+echo "smoke round: $([ $smoke = 0 ] && echo PASS || echo "FAIL (exit $smoke)"); full round: $([ $full = 0 ] && echo PASS || echo "FAIL (exit $full)"); rate-limit window untouched by smoke: $([ $window = 0 ] && echo yes || echo NO)"
+if [ "$full" = 0 ] && [ "$smoke" = 0 ] && [ "$window" = 0 ]; then echo "LOCAL QA: PASS"; exit 0; fi
+echo "LOCAL QA: FAIL"; exit 1

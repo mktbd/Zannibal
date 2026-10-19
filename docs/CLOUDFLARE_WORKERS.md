@@ -379,14 +379,20 @@ in "Use workflow from".
 | `seed-staging` | database / `staging-db` | gate (`--db marked`) → synthetic fixtures + staging admin (idempotent) |
 | `deploy-staging-placeholder` | placeholder / `staging-deploy` | gate (`--env`) → build `scripts/staging/placeholder` → `check-build-config --target placeholder` (no bindings) → `cf deploy --prebuilt` |
 | `deploy-staging` | deploy / `staging-deploy` | gate (`--anon`) → **Access gate (`--access`)** → staging build (guard) → `check-build-config --target staging` → `bundle-size` (5 MiB budget) → `vinext-cloudflare deploy --skip-build` → post-deploy `--site` check |
-| `test-staging` | test / `staging-test` | gate (refs + Access + banner + noindex) → cold → browser round → warm ×2 → 30-min soak → evaluate; JSON artifact for 14 days |
+| `smoke-staging` | smoke / `staging-test` | gate (refs + Access + banner + noindex) → smoke round (`--profile smoke`, about 5 min): headers and staging identity, admin login and pages, CMS edit saved → public within 60 s → restored, cover upload → deleted and verified gone, the seeded order fixture's status changed → restored. **No order request**, so the full test's per-IP window stays fresh. JSON artifact for 14 days |
+| `test-staging` | test / `staging-test` | gate (refs + Access + banner + noindex) → cold → browser round → warm ×2 → 30-min soak → evaluate; JSON artifact for 14 days. **Fail-fast:** if the browser round fails, warm, soak and evaluate are skipped and the failed check names go to the job summary |
 | `production-build-check` | no environment, no credentials | gate (`--env`) → production build (placeholder anon key) → `check-build-config --target production` → `bundle-size`; nothing uploaded |
 
 Every mode first runs `authorize` (no secrets), then its job at the approved revision.
 
-Run `test-staging` right after `deploy-staging`. Wait 60 minutes before
-re-running it after a run that stopped before the soak, so the browser
-round gets a fresh per-IP order window.
+Order after every deployment: `deploy-staging` → `smoke-staging` →
+`test-staging`, each only after the previous one passed. The smoke round's
+order check uses the order fixture written by `seed-staging` (directly to
+the database, never through the order API), so run `seed-staging` once
+after this change; until then it falls back to the newest synthetic order
+from an earlier full test. Wait 60 minutes before re-running
+`test-staging` after a run that stopped early (including a fail-fast
+stop), so the browser round gets a fresh per-IP order window.
 
 **Staging acceptance criteria** (`evaluate.mjs`; missing evidence is a FAIL):
 1. Runtime stability: zero error-1102 pages, network errors and failed
@@ -431,13 +437,14 @@ stage report.
 ## 8a. Pre-deployment QA (required)
 
 **Rule:** a staging deployment is recommended only after Level 1 and
-Level 2 both pass on the exact commit to be deployed. Level 3 (staging
-smoke, Phase 2) then runs before the full `test-staging`.
+Level 2 both pass on the exact commit to be deployed. Level 3
+(`smoke-staging`, §7) then runs before the full `test-staging`.
 
 | Level | Command | What it proves | Time |
 |---|---|---|---|
 | 1. Static | `npm run qa:static` | lint, `next typegen` + `tsc`, unit tests, secret scan, staging workflow identical to main, staging build refuses the production URL, synthetic production and staging builds with `check-build-config` and the bundle budget | ~1 min |
-| 2. Local integration | `npm run qa:local` | the Worker on local workerd against a disposable local Supabase (real Postgres, RLS, Auth, Storage): the full browser round in a throttled Chromium (CPU ×4, 4 Mbit/s) | ~3 min |
+| 2. Local integration | `npm run qa:local` | the Worker on local workerd against a disposable local Supabase (real Postgres, RLS, Auth, Storage): the smoke round, then the full browser round (as on staging), in a throttled Chromium (CPU ×4, 4 Mbit/s); fails if the smoke round changes the order rate-limit counters, and the full round's fresh-window check proves it end to end | ~4 min |
+| 3. Staging smoke | `smoke-staging` mode (§7) | the deployed Worker behind Access with the staging Supabase project | ~5 min |
 
 Both scripts first remove every credential-like environment variable.
 Level 1 builds with synthetic, non-existent Supabase refs. Level 2 runs
