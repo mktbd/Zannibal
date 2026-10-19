@@ -41,6 +41,19 @@ test("the smoke profile sends no order request (it must not use up the full test
   assert.match(smokeFn, /CLEANUP FAILED/);
 });
 
+test("the smoke order check waits for the status controls and demands exactly two for this order", () => {
+  // smoke-staging run #22 read the controls with an instant count() and found none; the read must wait.
+  const fn = src.slice(src.indexOf("async function smokeOrderStatus"), src.indexOf("\nlet browser = null"));
+  const saved = fn.slice(fn.indexOf("const saved = async"), fn.indexOf("const setStatus"));
+  assert.match(saved, /actions\.first\(\)\.waitFor\(\{ state: "visible", timeout: 15000 \}\)/, "waits up to 15 s for a visible status-action button");
+  assert.ok(saved.indexOf("waitFor(") < saved.indexOf("evaluateAll("), "reads the buttons only after the wait");
+  assert.match(saved, /names\.length === 2 && offered\.length === 2/, "exactly two buttons, both for this order");
+  assert.doesNotMatch(saved.slice(0, saved.indexOf("if (names.length === 2")), /\.count\(\)/, "no instant count decides the status");
+  for (const field of ["detail HTTP", "path ", "heading ", "visible status buttons", "status buttons in DOM", "waited "]) assert.ok(saved.includes(field), `evidence records: ${field}`);
+  assert.match(fn, /fixture \? "seeded fixture" : "newest synthetic order/, "evidence says fixture or fallback");
+  assert.match(fn, /could not read the order's saved status: \$\{first\.evidence\}/, "a failed read fails both checks with the evidence");
+});
+
 test("the smoke order fixture is written by the seed directly to the database, never via the order API", () => {
   const seed = readFileSync(new URL("../../scripts/staging/seed.mjs", import.meta.url), "utf8");
   assert.match(seed, /insert into public\.orders \(id,[^)]*\)[\s\S]*smoke\.fixture@example\.test[\s\S]*on conflict \(id\) do update set status = 'pending'/);

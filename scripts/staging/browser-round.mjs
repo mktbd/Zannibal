@@ -117,31 +117,60 @@ async function smokeOrderStatus(page) {
   }
   const source = fixture ? "seeded fixture" : "newest synthetic order; re-seed to add the fixture";
   const detail = BASE + pathOf(BASE + href);
+  // Every status-action button, whichever order it names, so a wrong order or label is visible too.
+  const STATUS_ACTION = /^Mark order (.+) as (Pending|Fulfilled|Invalid)$/;
+  const actions = page.getByRole("button", { name: STATUS_ACTION });
+  const label = (t) => redactText(String(t || "").replaceAll(number, "<this order>")).replace(/MKT-\d{4}-\d+/g, "<other order>");
+  /**
+   * The saved status, read from the status controls once they are ready: wait (up to 15 s, no fixed
+   * sleep) for a visible status-action button, then require exactly two, both for this order with
+   * valid labels -- the missing one is the current status. Anything else returns sanitized evidence.
+   */
   const saved = async () => {
-    await page.goto(detail);
-    const offered = [];
-    for (const [k, label] of Object.entries(LABELS)) if (await page.getByRole("button", { name: `Mark order ${number} as ${label}` }).count()) offered.push(k);
-    return offered.length === 2 ? Object.keys(LABELS).find((k) => !offered.includes(k)) : null;
+    const res = await page.goto(detail);
+    const t0 = Date.now();
+    const ready = await actions.first().waitFor({ state: "visible", timeout: 15000 }).then(() => true, () => false);
+    const waitedMs = Date.now() - t0;
+    const names = ready ? await actions.evaluateAll((els) => els.map((e) => e.getAttribute("aria-label") || e.textContent || "")) : [];
+    const offered = Object.entries(LABELS).filter(([, l]) => names.includes(`Mark order ${number} as ${l}`)).map(([k]) => k);
+    if (names.length === 2 && offered.length === 2) return { status: Object.keys(LABELS).find((k) => !offered.includes(k)) };
+    const inDom = await page.locator("button[aria-label^='Mark order']").count().catch(() => 0);
+    const heading = await page.locator("h1").first().textContent({ timeout: 1000 }).catch(() => null);
+    // Most telling first: check details are cut at 160 characters (the full line is logged below).
+    const evidence = [
+      `visible status buttons [${names.map(label).join(", ") || "none"}]`,
+      `status buttons in DOM ${inDom}`,
+      `waited ${waitedMs} ms${ready ? "" : " (timed out)"}`,
+      `detail HTTP ${res ? res.status() : "no response"}`,
+      `heading "${heading ? label(heading).slice(0, 40) : "none"}"`,
+      `path ${redactPath(pathOf(page.url()))}`,
+      source,
+    ].join("; ");
+    note({ kind: "order status evidence", text: evidence });
+    console.log(`   order status evidence: ${evidence}`);
+    return { status: null, evidence };
   };
   const setStatus = async (to) => {
     await page.goto(detail);
     await Promise.all([page.waitForURL((u) => u.searchParams.get("notice") === to, { timeout: 30000 }).catch(() => {}), page.getByRole("button", { name: `Mark order ${number} as ${LABELS[to]}` }).click({ timeout: 15000 })]);
   };
-  const original = await saved();
+  const first = await saved();
+  const original = first.status;
   if (!original) {
-    for (const name of ORDER_CHECKS) check(name, false, "could not read the order's saved status");
+    for (const name of ORDER_CHECKS) check(name, false, `could not read the order's saved status: ${first.evidence}`);
     return;
   }
   const target = original === "pending" ? "invalid" : "pending";
   const interrupted = step;
   try {
     await setStatus(target);
-    const now = await saved();
-    check(ORDER_CHECKS[0], now === target, `${source}: ${original} -> ${target}${now === target ? "" : `: saved status is ${now ?? "unreadable"}`}`);
+    const after = await saved();
+    const now = after.status;
+    check(ORDER_CHECKS[0], now === target, `${source}: ${original} -> ${target}${now === target ? "" : `: saved status is ${now ?? `unreadable (${after.evidence})`}`}`);
   } finally {
     step = "order status restore";
     let restored = false;
-    try { if ((await saved()) !== original) await setStatus(original); restored = (await saved()) === original; } catch {}
+    try { if ((await saved()).status !== original) await setStatus(original); restored = (await saved()).status === original; } catch {}
     if (!restored) console.error(`CLEANUP FAILED: synthetic order ${number} may be left as ${target}; set it back to ${LABELS[original]} in the admin.`);
     check(ORDER_CHECKS[1], restored, restored ? `back to ${original}` : "CLEANUP FAILED: saved status is not the original");
     step = interrupted;
