@@ -478,6 +478,29 @@ these in a real browser, each refused save with an unchanged record:
 Both use synthetic records only, remove them, and refuse anything but the
 local QA stack.
 
+**CMS lifecycle probe (Stage 3B, part of Level 2):**
+`scripts/qa/cms-probe.mjs` drives the admin UI as the seeded admin, for an
+Analysis, an Article and a Case Study:
+
+- create a draft and check it is absent from the detail page, archive,
+  feed, sitemap and homepage;
+- refused publishing attempts (no slides, empty body, no cover, price 0 or
+  malformed, missing fields, a slug in use, media never uploaded or from
+  another record), each with an unchanged record;
+- media: slides uploaded, reordered and removed; Article covers and inline
+  images replaced and removed; Case Study covers replaced, including after
+  a refused save. Old objects must be gone from Storage;
+- publish, edit while published (the cached detail page and archive must
+  refresh within 60 s), unpublish and delete. Delete must also remove
+  slides, tag links, the Article link and the Storage folder; orders stay,
+  unlinked;
+- tags: create, duplicate refusal, inline create, archive filtering,
+  rename, delete refused while in use, and delete once unused.
+
+Results are read back from the database, `storage.objects` and the public
+site. The probe uses `qa-cms-*` records only, removes them, and refuses
+anything but the local QA stack.
+
 Throttling makes timing bugs more likely to show, not certain to.
 Interacting with a control before React hydrates it is the known case
 (staging run #19: no upload request was ever sent). The browser round

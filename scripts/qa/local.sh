@@ -10,7 +10,9 @@
 # more likely to show, not certain to; the deterministic guard is
 # tests/unit/browser-test-rules.test.mjs. The smoke round must leave the order rate-limit counters
 # unchanged (it sends no order request), or the run fails. Then the Stage 3A security probes run:
-# scripts/qa/rls-probe.mjs (RLS and Storage per identity) and scripts/qa/auth-probe.mjs (admin auth).
+# scripts/qa/rls-probe.mjs (RLS and Storage per identity) and scripts/qa/auth-probe.mjs (admin auth),
+# and the Stage 3B CMS lifecycle probe, scripts/qa/cms-probe.mjs (publish/edit/unpublish/delete, media,
+# publishing rules, tags).
 #
 # Safety:
 #   - Every credential-like variable is removed from the environment first, so production or staging
@@ -142,14 +144,16 @@ probe() { env QA_API_URL="$QA_API_URL" QA_ANON_KEY="$QA_ANON_KEY" QA_SERVICE_ROL
 probe node scripts/qa/rls-probe.mjs --out "$OUT/rls.json"; rls=$?
 step "security probes: admin authentication (logout, non-admin, revoked and expired sessions)"
 probe node scripts/qa/auth-probe.mjs "$BASE" --out "$OUT/auth.json" $THROTTLE; auth=$?
+step "CMS lifecycle probes (Analysis, Article, Case Study: drafts, publishing rules, media, tags, delete)"
+probe node scripts/qa/cms-probe.mjs "$BASE" --out "$OUT/cms.json" $THROTTLE; cms=$?
 unset QA_SERVICE_ROLE_KEY
 set -e
 if [ "$before" = "$after" ]; then echo "smoke sent no order request (rate-limit hits unchanged: $before)"; window=0
 else echo "FAIL  smoke changed the order rate-limit counters ($before -> $after): it must not use up the full test's window"; window=1; fi
 
 step "result"
-echo "results: $OUT/smoke.json, $OUT/browser.json, $OUT/rls.json, $OUT/auth.json"
+echo "results: $OUT/smoke.json, $OUT/browser.json, $OUT/rls.json, $OUT/auth.json, $OUT/cms.json"
 echo "smoke round: $([ $smoke = 0 ] && echo PASS || echo "FAIL (exit $smoke)"); full round: $([ $full = 0 ] && echo PASS || echo "FAIL (exit $full)"); rate-limit window untouched by smoke: $([ $window = 0 ] && echo yes || echo NO)"
-echo "RLS/Storage probes: $([ $rls = 0 ] && echo PASS || echo "FAIL (exit $rls)"); auth probes: $([ $auth = 0 ] && echo PASS || echo "FAIL (exit $auth)")"
-if [ "$full" = 0 ] && [ "$smoke" = 0 ] && [ "$window" = 0 ] && [ "$rls" = 0 ] && [ "$auth" = 0 ]; then echo "LOCAL QA: PASS"; exit 0; fi
+echo "RLS/Storage probes: $([ $rls = 0 ] && echo PASS || echo "FAIL (exit $rls)"); auth probes: $([ $auth = 0 ] && echo PASS || echo "FAIL (exit $auth)"); CMS lifecycle probes: $([ $cms = 0 ] && echo PASS || echo "FAIL (exit $cms)")"
+if [ "$full" = 0 ] && [ "$smoke" = 0 ] && [ "$window" = 0 ] && [ "$rls" = 0 ] && [ "$auth" = 0 ] && [ "$cms" = 0 ]; then echo "LOCAL QA: PASS"; exit 0; fi
 echo "LOCAL QA: FAIL"; exit 1
