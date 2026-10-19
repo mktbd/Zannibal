@@ -1,12 +1,11 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
+  clientIpFromHeaders,
   hashClientKey,
-  normalizeClientIp,
   parseLimitSetting,
   ORDER_RATE_LIMIT_DEFAULTS,
   ORDER_RATE_WINDOW_SECONDS,
-  UNKNOWN_CLIENT,
 } from "@/lib/order-rate-limit-core";
 
 /**
@@ -28,18 +27,17 @@ export type RateLimitDecision =
   | { kind: "error" };
 
 /**
- * The client address to rate-limit, from headers only a trusted proxy can
- * set. On Vercel (VERCEL=1) the platform overwrites X-Real-IP and
- * X-Forwarded-For with the connecting client's address, so they can't be
- * spoofed. Anywhere else these headers are client-controlled and are used
- * only when ORDER_RATE_LIMIT_TRUST_PROXY=true (behind a proxy that
- * overwrites them); otherwise every request shares one "unknown" bucket --
- * strict, but never bypassable.
+ * The client address to rate-limit (lib/order-rate-limit-core.ts
+ * clientIpFromHeaders): CF-Connecting-IP on Cloudflare Workers
+ * (DEPLOY_PLATFORM=cloudflare), X-Real-IP/X-Forwarded-For on Vercel or
+ * behind a trusted proxy, otherwise one shared "unknown" bucket.
  */
 export function clientAddress(headers: Headers): string {
-  const trusted = process.env.VERCEL === "1" || process.env.ORDER_RATE_LIMIT_TRUST_PROXY === "true";
-  if (!trusted) return UNKNOWN_CLIENT;
-  return normalizeClientIp(headers.get("x-real-ip")) ?? normalizeClientIp(headers.get("x-forwarded-for")) ?? UNKNOWN_CLIENT;
+  return clientIpFromHeaders((name) => headers.get(name), {
+    platform: process.env.DEPLOY_PLATFORM,
+    vercel: process.env.VERCEL,
+    trustProxy: process.env.ORDER_RATE_LIMIT_TRUST_PROXY,
+  });
 }
 
 const warn = (message: string) => console.error(`[orders] ${message}`);

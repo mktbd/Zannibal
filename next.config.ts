@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import { isIndexableDeployment } from "./lib/seo";
+import { resolveDeploymentEnv } from "./lib/deployment";
 import { securityHeaders } from "./lib/security-headers";
 
 /**
@@ -47,19 +48,26 @@ const nextConfig: NextConfig = {
    */
   async headers() {
     const noindex = [{ key: "X-Robots-Tag", value: "noindex, nofollow" }];
+    // SITE_ENV (Cloudflare) else VERCEL_ENV -- lib/deployment.ts.
+    const deploymentEnv = resolveDeploymentEnv(process.env.SITE_ENV, process.env.VERCEL_ENV);
     // Security headers on every response (lib/security-headers.ts).
     const security = {
       source: "/:path*",
       headers: securityHeaders({
         supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL,
         development: process.env.NODE_ENV === "development",
-        productionHttps: process.env.VERCEL_ENV === "production",
+        productionHttps: deploymentEnv === "production",
       }),
     };
-    // Vercel preview/development deployments: every response is noindex.
-    if (!isIndexableDeployment(process.env.VERCEL_ENV)) return [security, { source: "/:path*", headers: noindex }];
+    // vinext's matcher does not match "/" with "/:path*" (Next.js does), so
+    // the homepage is listed explicitly; harmless duplicate under Next.js.
+    const securityRoot = { ...security, source: "/" };
+    // Non-production deployments: every response is noindex.
+    if (!isIndexableDeployment(deploymentEnv))
+      return [security, securityRoot, { source: "/:path*", headers: noindex }, { source: "/", headers: noindex }];
     return [
       security,
+      securityRoot,
       { source: "/admin", headers: noindex },
       { source: "/admin/:path*", headers: noindex },
       { source: "/api/:path*", headers: noindex },

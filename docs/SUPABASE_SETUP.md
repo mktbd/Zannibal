@@ -40,11 +40,30 @@ client code fails the build instead of shipping the key to the browser.
 gen:types` (section 9) — not read by the running application.
 
 Since Stage 4E the service-role key is **required in production** for Case
-Study purchases: `POST /api/orders` uses it (server-side only) to record
-Pending orders. Without it the purchase form shows a "couldn't be
-submitted" message and no order is created. `BKASH_PAYMENT_NUMBER` (also
-server-only, see `.env.example`) sets the receiving bKash number shown on
-the purchase page; when it is unset, purchasing is paused.
+Study purchases: `POST /api/orders` uses it (server-side only) to check the
+shared rate limit (Stage 5E-A) and record Pending orders. Without it the
+endpoint fails closed (503 `temporarily_unavailable`) and no order is
+created. `BKASH_PAYMENT_NUMBER` (also server-only, see `.env.example`) sets
+the receiving bKash number shown on the purchase page; when it is unset,
+purchasing is paused.
+
+All application variables (none of the values belong in the repository;
+`.env.example` documents each one):
+
+| Variable | Required | Notes |
+|---|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | yes | Project URL; embedded in the build |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | yes | Public anon key; access is governed by RLS |
+| `SUPABASE_SERVICE_ROLE_KEY` | for purchases | Server-only; order submission and rate limiting |
+| `BKASH_PAYMENT_NUMBER` | to open purchasing | Server-only; unset = purchasing paused |
+| `SITE_URL` | no | Canonical origin, default `https://mktbd.co` (Stage 5C) |
+| `ORDER_RATE_LIMIT_PER_IP` | no | Default 5 order submissions per client IP per hour |
+| `ORDER_RATE_LIMIT_GLOBAL` | no | Default 100 per hour across all clients |
+| `ORDER_RATE_LIMIT_TRUST_PROXY` | no | Off-Vercel hosting behind a proxy that overwrites `X-Forwarded-For`/`X-Real-IP` only; never set it on Vercel |
+| `SUPABASE_PROJECT_ID` | no | Local type generation only -- see section 8 for why it must not be left set in a shell used for local Supabase work |
+
+`VERCEL` and `VERCEL_ENV` are set by Vercel itself. On Vercel, changing an
+environment variable takes effect only on the next deployment.
 
 ## 3. Applying migrations
 
@@ -64,15 +83,57 @@ commented; read them in order to understand the schema:
 | `20261003000008_storage.sql` | `editorial-media` bucket + Storage policies |
 | `20261004000009_storage_restrict_listing.sql` | replaces the public `SELECT` policy on `storage.objects` with an admin-only one, so the bucket can't be listed anonymously |
 | `20261008000010_articles.sql` | Stage 5A, applied to production 2026-10-08. `articles`, `article_tags`, Article branch of the tag-visibility policy, `analysis_article_links` (one-to-one Analysis ↔ Article link; publicly readable only when switched on and both records are published). The "PROPOSED" note in the file's header comment predates its approval; migration files are not edited after being applied |
+| `20261009000011_order_hardening.sql` | Stage 5E-A, applied to production 2026-10-09 (GitHub Actions run #12, after preflight run #10 and dry-run #11). Unique index on the normalised bKash Transaction ID (`upper(btrim(...))`), four order-field length constraints, `authenticated` may update only `orders.status`, unused `anon`/`authenticated` privileges on `orders` revoked, `order_rate_limits` table and `consume_order_rate_limit()` (service role only). Additive; reverse procedure in `MKTBD_SPEC.md` section 7, "Payment security (Stage 5E-A)" |
 
-**Against a hosted project**, using the [Supabase CLI](https://supabase.com/docs/guides/local-development/cli/getting-started)
-(already a devDependency — run via `npx supabase`):
+**Against the production project**, use the manual GitHub Actions
+workflow `.github/workflows/supabase-migrate.yml` ("Supabase migrate
+(manual)"), never a local `db push`. It runs the
+[Supabase CLI](https://supabase.com/docs/guides/local-development/cli/getting-started)
+with the project credentials held as repository secrets, checks that
+`supabase/migrations/` contains exactly the expected files, and has four
+modes, each run separately and each needing its own approval:
 
-```bash
-npx supabase login
-npx supabase link --project-ref <your-project-ref>
-npx supabase db push
-```
+| Mode | What it does | Writes? |
+|---|---|---|
+| `preflight` | One pinned, reviewed SELECT (`supabase/checks/*_preflight.sql`) reporting **aggregate counts only** about existing data that could stop the pending migration; fails if a blocking count is above 0 | no |
+| `dry-run` | Shows the remote migration history and the push plan; fails unless the plan is exactly the expected pending migration(s) | no |
+| `apply` | Repeats the dry-run checks, pushes, then verifies every expected version is recorded remotely | **yes** |
+| `verify` | One pinned, reviewed, catalog-only SELECT (`supabase/checks/*_verify.sql`) returning named **true/false checks only**; fails unless every check is true | no |
+
+Order for a new migration: update the workflow's expected/pending lists
+(and, if the migration needs them, add a preflight and a verify query with
+their SHA-256 pinned in the workflow) in a reviewed commit, then run
+`preflight` → `dry-run` → `apply` → `verify`. The `preflight` and `verify`
+queries run through the CLI's linked connection with the workflow's
+database privileges: the pinned hash guarantees that only the reviewed
+query runs, and the workflow's guards refuse anything but a single
+read-only SELECT -- but the hash does not by itself restrict database
+permissions, so review those queries as carefully as a migration.
+
+**Production verification for migration 11.** `verify` mode runs
+`supabase/checks/20261009000011_order_hardening_verify.sql`: 18 checks,
+from system catalogs, privilege functions and the migration history only
+(it never reads a row of `orders` or any other customer/content table) --
+migration recorded; the unique index exists, is valid and is exactly
+`upper(btrim(bkash_transaction_number))`; the four length constraints are
+validated; `authenticated` can update `status` and no other column, `anon`
+nothing; `anon`/`authenticated` have no INSERT/DELETE/TRUNCATE/REFERENCES/
+TRIGGER on `orders` while admin reads keep SELECT; `order_rate_limits`
+exists with RLS on, no policies and no privileges for `anon`,
+`authenticated` or `service_role`; `consume_order_rate_limit()` exists,
+is `SECURITY DEFINER` with an empty `search_path`, and only `service_role`
+may execute it; exactly the twelve expected public tables, all with RLS;
+exactly the expected 21 public and 4 Storage policies, and their
+definitions (command, roles, USING, WITH CHECK) match migrations 1-11 by
+hash. The policy hash assumes the same Postgres major version as local
+development (17); a mismatch fails closed and should be investigated
+before anything else is changed.
+
+**Rollback.** Migrations are additive and are not edited after being
+applied. To undo one, write and review a new migration that reverses it,
+then roll it out the same way. For migration 11 the reverse (and the
+order: application first, because the 5E-A code fails closed without
+`consume_order_rate_limit()`) is in `MKTBD_SPEC.md` section 7.
 
 **Against local Supabase** (requires Docker — see section 8):
 
@@ -190,8 +251,34 @@ With Docker available:
 
 ```bash
 npx supabase start     # spins up local Postgres + Auth + Storage + API
-npx supabase db reset  # (re)applies all migrations
+npx supabase db reset  # (re)applies all migrations -- DELETES all local data
 ```
+
+**CLI safety: inherited production credentials.** The Supabase CLI reads
+`SUPABASE_PROJECT_ID`, `SUPABASE_ACCESS_TOKEN` and `SUPABASE_DB_PASSWORD`
+from the environment. If a shell (or a CI/cloud session) has them set for
+the production project:
+
+- `supabase start` uses `SUPABASE_PROJECT_ID` instead of `project_id` in
+  `supabase/config.toml` to name the local containers and volumes, so a
+  "separate" local stack can silently attach to an existing one;
+- `--linked` commands, and commands like `migration repair` or `db query`
+  run without an explicit target, can reach the **production** project.
+
+So, for local work:
+
+- run the CLI with those variables removed, e.g.
+  `env -u SUPABASE_PROJECT_ID -u SUPABASE_ACCESS_TOKEN -u SUPABASE_DB_PASSWORD -u SUPABASE_SERVICE_ROLE_KEY npx supabase ...`;
+- target a local database explicitly with `--local` or
+  `--db-url "postgresql://postgres:postgres@127.0.0.1:<port>/postgres?sslmode=disable"`,
+  and check the container names (`docker ps`) and port before anything
+  that writes;
+- never run `db reset` against a database whose data you need; for tests
+  that must delete data, use a separate disposable stack (its own
+  `project_id` and ports), and make destructive test scripts refuse to run
+  unless the target database carries a marker that only the disposable
+  database has;
+- production schema changes go only through the workflow in section 3.
 
 `supabase start` prints a local URL/anon key/service-role key — put those
 in `.env.local` for local development.
@@ -220,10 +307,13 @@ UI code) or is retired in favor of them directly.
   defense-in-depth, not the only gate. A bug in either would still be
   caught by Postgres refusing the query/mutation.
 - The service-role key is never sent to the browser and is only read from
-  `lib/supabase/admin.ts`, which is called from exactly one place:
-  `lib/data/orders.ts`, for the duplicate-transaction lookup and the
-  INSERT of a Pending order behind `POST /api/orders` (Stage 4E). Public
-  reads, Admin reads and every Admin mutation still go through RLS.
+  `lib/supabase/admin.ts` (the client) and `lib/order-rate-limit.ts` (as
+  the key for the rate limit's IP hashing), both server-only. The client
+  is used in exactly two places, both behind `POST /api/orders`:
+  `lib/data/orders.ts` (duplicate-transaction lookup and the INSERT of a
+  Pending order, Stage 4E) and `lib/order-rate-limit.ts` (calling
+  `consume_order_rate_limit()`, Stage 5E-A). Public reads, Admin reads and
+  every Admin mutation still go through RLS.
 - `public.is_admin()` is `SECURITY DEFINER` so it can read `profiles`
   regardless of the calling role's own row-visibility — this is standard
   Supabase practice for this exact pattern, and the function's one query

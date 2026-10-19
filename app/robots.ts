@@ -10,7 +10,7 @@ import { INDEXABLE, SITE_ORIGIN } from "@/lib/seo-config";
  *   crawling hint, not access control.
  * - Purchase pages are not disallowed here, so crawlers can see their
  *   noindex, nofollow directives.
- * - Preview deployments (VERCEL_ENV=preview) disallow everything.
+ * - Non-production deployments (SITE_ENV / VERCEL_ENV, lib/deployment.ts) disallow everything.
  */
 export default function robots(): MetadataRoute.Robots {
   if (!INDEXABLE) return { rules: { userAgent: "*", disallow: "/" } };

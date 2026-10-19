@@ -1,5 +1,14 @@
 import "server-only";
-import { parseBkashNumber } from "@/lib/order-input";
+import { currentDeploymentEnv } from "@/lib/deployment";
+import { resolveBkashRecipient, STAGING_NOT_PAYABLE } from "@/lib/payment-recipient";
+
+export { STAGING_NOT_PAYABLE };
+
+const REFUSED: Record<string, string> = {
+  invalid: "BKASH_PAYMENT_NUMBER is not a valid Bangladesh mobile number; purchasing is paused.",
+  "placeholder-in-production": "BKASH_PAYMENT_NUMBER is the staging placeholder in a production deployment; purchasing is paused.",
+  "real-number-outside-production": "BKASH_PAYMENT_NUMBER is a real-looking number in a non-production deployment; purchasing is paused (staging may only use the placeholder).",
+};
 
 /**
  * mktbd's receiving bKash number for the manual purchase flow, from the
@@ -8,17 +17,15 @@ import { parseBkashNumber } from "@/lib/order-input";
  * and rendered on the server (not NEXT_PUBLIC_), so changing it needs no
  * rebuild and the purchase page and order endpoint always agree on it.
  *
- * Returns the normalised 11-digit number, or null when it is unset or not
- * a valid Bangladesh mobile number -- in which case purchasing is paused
- * (the page says so and POST /api/orders refuses new orders).
+ * Returns the normalised 11-digit number -- or, on a non-production
+ * deployment only, the literal STAGING_NOT_PAYABLE placeholder (see
+ * lib/payment-recipient.ts) -- or null when unset or refused, in which case
+ * purchasing is paused (the page says so and POST /api/orders refuses new
+ * orders). The configured value is never logged.
  */
 export function getBkashPaymentNumber(): string | null {
-  const configured = process.env.BKASH_PAYMENT_NUMBER;
-  if (!configured) return null;
-  const parsed = parseBkashNumber(configured);
-  if (!parsed.ok) {
-    console.error("[payment] BKASH_PAYMENT_NUMBER is not a valid Bangladesh mobile number; purchasing is paused.");
-    return null;
-  }
-  return parsed.value;
+  const result = resolveBkashRecipient(process.env.BKASH_PAYMENT_NUMBER, currentDeploymentEnv());
+  if (result.ok) return result.value;
+  if (result.reason !== "unset") console.error(`[payment] ${REFUSED[result.reason]}`);
+  return null;
 }

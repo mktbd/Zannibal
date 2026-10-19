@@ -54,8 +54,9 @@ function revalidateArticleViews(id?: string) {
   // Public pages: the archive, the reading page, and a linked Analysis's
   // "Read Article" link (shown only when both are published).
   revalidatePath("/articles");
-  revalidatePath("/articles/[slug]", "page");
-  revalidatePath("/analysis/[slug]", "page");
+  // Route patterns must include the (public) route group: page cache tags are built from it.
+  revalidatePath("/(public)/articles/[slug]", "page");
+  revalidatePath("/(public)/analysis/[slug]", "page");
 }
 
 /**

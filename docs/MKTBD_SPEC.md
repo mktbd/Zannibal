@@ -984,17 +984,48 @@ CAPTCHA, no status-transition rule and no order change history.
    with required reviewers for this workflow.
 2. **dry-run**, then **apply** (the workflow now expects migrations 1-11,
    with 11 pending).
-3. Deploy the application only after migration 11 is applied: the new
+3. **verify** (added in Stage 5E-B1): a pinned, catalog-only SELECT
+   (`supabase/checks/20261009000011_order_hardening_verify.sql`) returning
+   18 named true/false checks -- migration history, the normalised unique
+   index, the four validated length constraints, status-only UPDATE and
+   the revoked `orders` privileges, the rate-limit table and function
+   (RLS, no policies, no client privileges, SECURITY DEFINER with an
+   empty `search_path`, service role only), RLS on all twelve public
+   tables and the exact expected policies (names and definitions). It
+   never reads table rows. After removing comments and string literals,
+   the workflow guard refuses write keywords, side-effect functions,
+   dollar quoting and any `FROM`/`JOIN` on `public`, `storage` or `auth`;
+   the job fails
+   unless every check is exactly true. Details in
+   `docs/SUPABASE_SETUP.md` section 3.
+4. Deploy the application only after migration 11 is applied: the new
    code fails closed (503) without `consume_order_rate_limit()`.
-4. No new environment variables are required on Vercel
+5. No new environment variables are required on Vercel
    (`SUPABASE_SERVICE_ROLE_KEY` and `BKASH_PAYMENT_NUMBER` are already
    required to take orders); optional limit overrides above.
-5. Rollback: migration 11 is additive. To undo it: drop the function,
+6. Rollback: migration 11 is additive. To undo it: drop the function,
    table and index, drop the four length constraints, and
    `grant insert, update, delete, truncate, references, trigger on
    public.orders to anon, authenticated` (the previous defaults) -- but
    the application must be rolled back first, since the new code requires
    the function (fails closed without it).
+
+**Rollout record.** Preflight run #9 failed closed (result-format
+parsing; nothing printed or changed) and was fixed in `f504c54`; preflight
+run #10 passed with every count 0 (production had no orders); dry-run
+#11 planned migration 11 only; **apply run #12 (2026-10-09) applied it**
+and recorded migrations 1-11 remotely. The object-level `verify` run is
+pending approval.
+
+**Application deployment and rollback (Vercel).** Whether Vercel deploys
+`main` automatically, and which commit production serves, could not be
+established from the repository (no `vercel.json`, no deployment records
+visible) -- confirm it in the Vercel project before relying on either. If
+`main` is auto-deployed, every push to `main` is a production deployment
+and must be treated as one. Application rollback: promote the previous
+production deployment in Vercel (instant; database unchanged). Pausing
+purchases: unset `BKASH_PAYMENT_NUMBER` and redeploy (environment changes
+apply to new deployments only, so this takes a deployment, not seconds).
 
 ---
 
@@ -2551,3 +2582,79 @@ domain for `metadataBase` are still to be provided.
   `qa_disposable` marker schema. The development database was not reset
   (content fingerprint identical before and after).
 - No new dependency or external service.
+
+### Stage 5E-B1 — Production verification and documentation
+- Read-only post-apply verification for migration 11:
+  `supabase/checks/20261009000011_order_hardening_verify.sql` (18
+  catalog-only boolean checks) and a `verify` mode in the migration
+  workflow (pinned SHA-256, literal-aware read-only/catalog-only guard,
+  strict boolean-only result parsing). Tested locally: 18/18 true on the
+  development and QA databases, 22 deliberate breakages each detected
+  (QA, rolled back), guard and parser fixtures. Not yet run against
+  production.
+- `docs/SUPABASE_SETUP.md`: migration 11, the workflow's four modes,
+  production verification and rollback, the full environment-variable
+  table, and Supabase CLI safety with inherited production credentials;
+  `.env.example`: rate-limit settings and the `SUPABASE_PROJECT_ID`
+  caution.
+- Open: Vercel production branch, auto-deployment and the deployed commit
+  were not verifiable from this environment.
+
+### Stage 5E-B2A — Cloudflare Workers Free staging preparation (superseded by 5E-B2B)
+- Prepared a Workers Free staging test (vinext; Free CPU/request/size
+  gates). Superseded before any run: the owner moved to Workers Paid.
+  Not committed separately; its still-relevant parts carried into 5E-B2B.
+
+### Stage 5E-B2B — Cloudflare Workers Paid preparation (branch `cloudflare-staging`; this task)
+- Hosting decision: Cloudflare Workers Paid, built with vinext 1.1.0
+  (OpenNext's bundle was too large and its `proxy.ts` support
+  experimental). Production stays on Vercel until separately approved
+  cutover steps. Guide: `docs/CLOUDFLARE_WORKERS.md`.
+- App changes (Vercel production behaviour unchanged, verified):
+  `SITE_ENV` deployment environment (falls back to `VERCEL_ENV`);
+  `DEPLOY_PLATFORM=cloudflare` keys the order rate limit on
+  `CF-Connecting-IP`; non-production deployments accept only the
+  non-payable bKash placeholder `STAGING-NOT-PAYABLE` and show a red
+  staging banner; security and noindex headers also on `/`. Vercel
+  preview deployments now get the banner and the placeholder-only rule.
+- `cloudflare.config.ts`: staging (`mktbd-staging`, workers.dev behind
+  Cloudflare Access) and production (`mktbd`, no URL until a custom domain
+  is approved) targets with build guards on `SITE_ENV` and the Supabase
+  ref versus `PRODUCTION_REF`; CPU cap 1 s; free binding types only.
+- Manual-dispatch workflow `.github/workflows/cloudflare-staging.yml`
+  (migrate-staging, seed-staging, deploy-staging, test-staging,
+  production-build-check) with three staging GitHub environments,
+  content-based isolation gates (`scripts/staging/`), config and size
+  checks before upload, and no production deployment. A unit test pins
+  each job's allowed secrets and forbids inherited or dynamic secret
+  access. The staging workflow reads only the ref-only secret
+  `PRODUCTION_SUPABASE_REF`, never the production workflow's secrets.
+- Access first: a static placeholder Worker (`scripts/staging/placeholder`)
+  claims the staging name; `deploy-staging` uploads the application only
+  after proving Cloudflare Access is enforcing.
+- Production credential isolation: a plan to move the production Supabase
+  secrets into a protected `supabase-production` GitHub environment is in
+  `docs/CLOUDFLARE_WORKERS.md` §6a (not executed).
+
+### Stage 5E-B2C — Workflow registration and credential isolation (prepared; not committed)
+- The staging workflow is dispatched from `main` (where GitHub requires the
+  file) and runs only an approved `cloudflare-staging` revision: an
+  `authorize` job with no secrets checks the event, ref and workflow file,
+  and requires `staging_sha` to equal the repository variable
+  `CLOUDFLARE_STAGING_APPROVED_SHA`, be contained in the branch and carry
+  a byte-identical workflow file. Every job checks out that SHA.
+- Secrets are passed only to the steps that use them (never to dependency
+  installation or tool setup). `PRODUCTION_SUPABASE_REF` moves into the
+  staging environments, now restricted to `main`. Each job fails on
+  missing staging settings. The production build check uses a dummy ref.
+- Prepared but not applied: a `supabase-migrate.yml` patch binding the
+  `supabase-production` environment with a main-only guard, and a
+  minimal main commit adding only the staging workflow file.
+- Staging acceptance: runtime stability (no 1102/failed outcomes) and
+  full functional/security/freshness checks; CPU and request volume
+  reported for cost planning only.
+- Image optimization: upload-time WebP variants in Supabase Storage,
+  designed in `docs/IMAGE_OPTIMIZATION.md`, not implemented; required
+  before the production cutover, since vinext on Workers serves originals.
+- Not done: nothing pushed, deployed or migrated; no staging project yet;
+  no DNS or production secret changes; purchasing unchanged.

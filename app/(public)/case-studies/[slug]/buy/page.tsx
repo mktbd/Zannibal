@@ -5,7 +5,7 @@ import { Container, Eyebrow } from "@/components/site/primitives";
 import { CaseStudyCover } from "@/components/case-studies/case-study-cover";
 import { PurchaseFlow } from "@/components/case-studies/purchase-flow";
 import { getPublishedCaseStudy } from "@/lib/data/case-studies";
-import { getBkashPaymentNumber } from "@/lib/payment";
+import { getBkashPaymentNumber, STAGING_NOT_PAYABLE } from "@/lib/payment";
 import { formatMobileNumber } from "@/lib/order-input";
 import { formatBdt } from "@/lib/format";
 import { SITE } from "@/lib/site";
@@ -64,9 +64,16 @@ export default async function BuyCaseStudyPage({ params }: Props) {
                   <span>
                     Send exactly <strong className="font-semibold whitespace-nowrap tabular-nums">{price}</strong> to mktbd’s
                     bKash number:
-                    <span className="mt-2 block text-2xl font-semibold tracking-wide tabular-nums select-all sm:text-[1.75rem]">
-                      {formatMobileNumber(paymentNumber)}
-                    </span>
+                    {paymentNumber === STAGING_NOT_PAYABLE ? (
+                      // Staging only (lib/payment-recipient.ts): never a payable number.
+                      <span className="mt-2 block border border-red-700 px-3 py-2 text-base font-semibold text-red-800">
+                        STAGING-NOT-PAYABLE — test site, no real bKash number. Do not send money.
+                      </span>
+                    ) : (
+                      <span className="mt-2 block text-2xl font-semibold tracking-wide tabular-nums select-all sm:text-[1.75rem]">
+                        {formatMobileNumber(paymentNumber)}
+                      </span>
+                    )}
                   </span>
                 </li>
                 <li className="grid grid-cols-[1.5rem_minmax(0,1fr)] gap-x-2">

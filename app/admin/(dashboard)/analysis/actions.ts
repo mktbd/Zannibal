@@ -135,10 +135,11 @@ function revalidateAnalysisViews(id?: string) {
     revalidatePath(`/admin/analysis/${id}/preview`);
   }
   revalidatePath("/analysis");
-  revalidatePath("/analysis/[slug]", "page");
+  // Route patterns must include the (public) route group: page cache tags are built from it.
+  revalidatePath("/(public)/analysis/[slug]", "page");
   // An Article's "See Visual Story" link depends on this Analysis (status,
   // slug, and the Linked Article toggle).
-  revalidatePath("/articles/[slug]", "page");
+  revalidatePath("/(public)/articles/[slug]", "page");
   revalidatePath("/");
 }
 
