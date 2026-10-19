@@ -1,0 +1,128 @@
+# Cloudflare Workers PRODUCTION deploy (manual). Deploys main as the "mktbd" Worker on mktbd.co and
+# www.mktbd.co (the custom domains are declared in cloudflare.config.ts and re-asserted on every deploy).
+#
+# - Manual dispatch of this file on main only. The cloudflare-production GitHub environment is limited
+#   to the main branch and requires a reviewer, so nothing runs until it is approved.
+# - Production values live only in that environment. No other environment is bound: the Supabase
+#   migration credentials stay in supabase-production, and no staging setting is used. This workflow
+#   never touches the database.
+# - The build is the same vinext build as staging, with the production build guards: cloudflare.config.ts
+#   refuses a Supabase URL whose ref is not PRODUCTION_REF, and check-build-config.mjs --target production
+#   checks the Worker shape (name, no workers.dev, exactly the two custom domains, secrets not in the
+#   build, free binding types only) before anything is uploaded.
+# - Secrets are passed at step level, only where used: never to checkout or dependency installation. The
+#   Worker secrets go up with the version from a 0600 file in the runner's temp directory, deleted
+#   afterwards. Nothing is uploaded as an artifact.
+# - Purchasing stays paused: every deploy sets BKASH_PAYMENT_NUMBER to the non-payable placeholder, which
+#   a production deployment refuses (lib/payment-recipient.ts).
+name: Cloudflare production deploy (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      production_ref:
+        description: "Type the PRODUCTION Supabase project ref (20 characters) to confirm the target"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: cloudflare-production
+    env:
+      WORKER_BUDGET_KIB: "5120"
+      # Build inputs at job level, so any step that re-reads cloudflare.config.ts sees the same target.
+      # The URL and anon key are public by design (they ship in the site's JavaScript); they are kept as
+      # secrets only so they are masked in this public repository's logs.
+      DEPLOY_TARGET: production
+      SITE_ENV: production
+      DEPLOY_PLATFORM: cloudflare
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.PRODUCTION_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.PRODUCTION_SUPABASE_ANON_KEY }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Refuse anything but a manual dispatch of main's workflow file
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          [ "$EVENT" = workflow_dispatch ] || { echo "::error::manual dispatch only"; exit 1; }
+          [ "$REF" = refs/heads/main ] || { echo "::error::dispatch with 'Use workflow from: main' (got $REF)"; exit 1; }
+          [ "$WORKFLOW_REF" = "$REPO/.github/workflows/cloudflare-production.yml@refs/heads/main" ] || { echo "::error::unexpected workflow file"; exit 1; }
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies (no secrets in this step)
+        run: npm ci --no-audit --no-fund
+      - name: Production gate (names and outcomes only)
+        env:
+          TYPED_REF: ${{ inputs.production_ref }}
+          PRODUCTION_REF: ${{ secrets.PRODUCTION_SUPABASE_REF }}
+          HAS_TOKEN: ${{ secrets.CLOUDFLARE_PRODUCTION_DEPLOY_TOKEN != '' }}
+          HAS_SERVICE_ROLE_KEY: ${{ secrets.PRODUCTION_SUPABASE_SERVICE_ROLE_KEY != '' }}
+        run: |
+          set -euo pipefail
+          missing=""
+          for name in PRODUCTION_REF NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_ANON_KEY CLOUDFLARE_ACCOUNT_ID; do
+            [ -n "${!name:-}" ] || missing="$missing $name"
+          done
+          [ "$HAS_TOKEN" = true ] || missing="$missing CLOUDFLARE_PRODUCTION_DEPLOY_TOKEN"
+          [ "$HAS_SERVICE_ROLE_KEY" = true ] || missing="$missing PRODUCTION_SUPABASE_SERVICE_ROLE_KEY"
+          [ -z "$missing" ] || { echo "::error::missing in the cloudflare-production environment:$missing"; exit 1; }
+          [[ "$PRODUCTION_REF" =~ ^[a-z0-9]{20}$ ]] || { echo "::error::PRODUCTION_SUPABASE_REF is not a 20-character project ref"; exit 1; }
+          [ "$TYPED_REF" = "$PRODUCTION_REF" ] || { echo "::error::the typed ref is not the production project ref"; exit 1; }
+          [[ "$NEXT_PUBLIC_SUPABASE_URL" =~ ^https://([a-z0-9]{20})\.supabase\.co/?$ ]] && [ "${BASH_REMATCH[1]}" = "$PRODUCTION_REF" ] \
+            || { echo "::error::PRODUCTION_SUPABASE_URL is not the production project"; exit 1; }
+          # Staging settings and the Supabase migration credentials never belong in this job.
+          for name in $(compgen -e); do
+            case "$name" in
+              STAGING_*|CF_ACCESS_*|SUPABASE_ACCESS_TOKEN|SUPABASE_DB_PASSWORD|SUPABASE_PROJECT_ID|SUPABASE_SERVICE_ROLE_KEY)
+                echo "::error::$name must not be set in the production deploy job"; exit 1 ;;
+            esac
+          done
+          echo "Production gate passed: settings present, the typed ref and the URL match the production project."
+      - name: Build the production Worker and check it before upload
+        env:
+          PRODUCTION_REF: ${{ secrets.PRODUCTION_SUPABASE_REF }}
+        run: |
+          set -euo pipefail
+          npm run build:vinext
+          node scripts/staging/check-build-config.mjs --target production
+          echo "### Production deploy" >> "$GITHUB_STEP_SUMMARY"
+          node scripts/staging/bundle-size.mjs --budget-kib "$WORKER_BUDGET_KIB" --summary "$GITHUB_STEP_SUMMARY"
+      - name: Deploy the production Worker
+        env:
+          PRODUCTION_REF: ${{ secrets.PRODUCTION_SUPABASE_REF }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PRODUCTION_DEPLOY_TOKEN }}
+          SERVICE_ROLE_KEY: ${{ secrets.PRODUCTION_SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          secrets_file="$RUNNER_TEMP/worker-secrets.env"
+          trap 'rm -f "$secrets_file"' EXIT
+          # Purchasing paused: the placeholder is refused in production, so the buy page says purchasing
+          # is paused and POST /api/orders refuses new orders.
+          printf 'SUPABASE_SERVICE_ROLE_KEY=%s\nBKASH_PAYMENT_NUMBER=%s\n' "$SERVICE_ROLE_KEY" "STAGING-NOT-PAYABLE" > "$secrets_file"
+          unset SERVICE_ROLE_KEY
+          # --prebuilt: upload exactly the build checked in the previous step (what vinext-cloudflare
+          # deploy --skip-build runs), with the Worker secrets attached to the version.
+          npx cf deploy --prebuilt --secrets-file "$secrets_file"
+          echo "Deployed main@${GITHUB_SHA::12} as the mktbd Worker (custom domains mktbd.co, www.mktbd.co; purchasing paused)." >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove the build output
+        if: always()
+        run: rm -rf .cloudflare/output "$RUNNER_TEMP/worker-secrets.env"

@@ -4,7 +4,7 @@
 //   placeholder: scripts/staging/placeholder (run from the repository root after its build). It must
 //   be the mktbd-staging Worker with no bindings and no exports at all.
 // Reads .cloudflare/output/v0/workers/default/worker.config.json and fails unless it matches the
-// target exactly: Worker name, workers.dev exposure, SITE_ENV, the bKash recipient binding, the CPU
+// target exactly: Worker name, workers.dev exposure, custom domains, SITE_ENV, the bKash recipient binding, the CPU
 // cap, strict public fetch, and only binding types that carry no extra Cloudflare charge (static
 // assets, plain text, secrets, version metadata). A KV/R2/D1/Durable Object/Images/Queue/AI binding
 // appearing in the build fails it, so no paid service is added without a deliberate change here.
@@ -40,7 +40,10 @@ const env = c.env || {};
 expect(`name is ${production ? "mktbd" : "mktbd-staging"}`, c.name === (production ? "mktbd" : "mktbd-staging"));
 expect(`workersDev is ${!production}`, c.workersDev === !production);
 expect("previewUrls is false", c.previewUrls === false);
-expect("no routes or custom domains in config", !c.routes && !c.route && !c.domains);
+expect("no routes in config", !c.routes && !c.route);
+// Production is served on exactly these custom domains (re-asserted on every deploy); staging on none.
+const domains = production ? ["mktbd.co", "www.mktbd.co"] : [];
+expect(`custom domains are exactly [${domains.join(", ")}]`, JSON.stringify(c.domains ?? []) === JSON.stringify(domains));
 expect("CPU cap limits.cpuMs is set and <= 5000", Number.isFinite(c.limits?.cpuMs) && c.limits.cpuMs > 0 && c.limits.cpuMs <= 5000);
 // LOCAL_TEST=1 (local workerd against a Supabase stack on 127.0.0.1) drops global_fetch_strictly_public; CI never sets it.
 const localTest = process.env.LOCAL_TEST === "1";

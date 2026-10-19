@@ -42,13 +42,13 @@ Related: `docs/IMAGE_OPTIMIZATION.md` (upload-time image variants, design),
 | | staging | production |
 |---|---|---|
 | Worker | `mktbd-staging` | `mktbd` |
-| Reachable at | workers.dev only, behind Cloudflare Access | nothing yet (no workers.dev, no route); custom domain later |
+| Reachable at | workers.dev only, behind Cloudflare Access | custom domains `mktbd.co` and `www.mktbd.co` only (declared in `cloudflare.config.ts`; no workers.dev) |
 | `SITE_ENV` | `preview`: noindex everywhere, red staging banner | `production`: indexable, HSTS |
 | Supabase | staging project (ref must differ from `PRODUCTION_REF`) | production project (ref must equal `PRODUCTION_REF`) |
 | bKash recipient | `STAGING-NOT-PAYABLE` in the build; a real number pauses purchasing | dashboard secret, real number; the placeholder pauses purchasing |
 | Service-role key | Worker secret (staging value), set in the dashboard | Worker secret (production value), set in the dashboard later |
 | CPU cap | `limits.cpuMs = 1000` | `limits.cpuMs = 1000` |
-| Deployed by CI | yes, `deploy-staging` (manual + reviewer) | **no**, `production-build-check` only builds |
+| Deployed by CI | yes, `deploy-staging` (manual + reviewer) | yes, `cloudflare-production.yml` (manual + reviewer, §4a) |
 
 **Runtime** (the same for both targets):
 - **Requests:** vinext's fetch handler on Workers, `nodejs_compat` and
@@ -212,14 +212,49 @@ Further:
      charge**; if it does, stop and ask;
    - Workers Logs volume is within the included quota.
 
-**Production, not now (each item a separate approval):**
-- add the `mktbd.co` zone to Cloudflare (DNS change);
-- create the production Worker's secrets (`SUPABASE_SERVICE_ROLE_KEY`,
-  `BKASH_PAYMENT_NUMBER`) in the dashboard;
-- attach the custom domain;
-- add a production deploy job: its own `production-deploy` environment,
-  limited to `main`, with a required reviewer and its own deploy token;
-- cut over from Vercel.
+## 4a. Production deploy (`cloudflare-production.yml`)
+
+A manual workflow that deploys `main` as the `mktbd` Worker. It never
+touches the database (migrations stay in `supabase-migrate.yml`).
+
+**What it does:**
+- refuses anything but a manual dispatch of `main`'s own copy of the file;
+- refuses unless the typed project ref equals `PRODUCTION_SUPABASE_REF` and
+  the URL belongs to that project; refuses staging settings and the
+  Supabase migration credentials;
+- runs the same vinext build as staging. The build guard in
+  `cloudflare.config.ts` and `check-build-config.mjs --target production`
+  must pass before anything is uploaded;
+- runs `cf deploy --prebuilt --secrets-file`. The two Worker secrets go up
+  with the version, from a 0600 temp file that is deleted afterwards.
+  `BKASH_PAYMENT_NUMBER` is always the non-payable placeholder, so
+  purchasing stays paused. Enabling purchases means changing that line.
+
+**Custom domains:** `mktbd.co` and `www.mktbd.co` are declared in
+`cloudflare.config.ts`. With a list configured, every deploy replaces the
+Worker's custom domains with exactly that list. A domain added only in the
+dashboard is removed by the next deploy, so add it to the config instead.
+`check-build-config.mjs` fails a production build whose domain list
+differs. The first deploy attaches both domains, so run it only after the
+`mktbd.co` zone is **Active**. Remove any existing apex or `www` DNS records
+first: the deploy refuses to overwrite them.
+
+**Environment `cloudflare-production`** (deployment branches: `main` only;
+required reviewer):
+
+| Kind | Name | Value |
+|---|---|---|
+| secret | `CLOUDFLARE_PRODUCTION_DEPLOY_TOKEN` | token for this account only: *Account → Workers Scripts → Edit*, *Account Settings → Read*; zone `mktbd.co`: *Workers Routes → Edit*, *DNS → Edit* (custom domains) |
+| secret | `PRODUCTION_SUPABASE_SERVICE_ROLE_KEY` | production service-role key, uploaded as the Worker secret `SUPABASE_SERVICE_ROLE_KEY` |
+| secret | `PRODUCTION_SUPABASE_REF` | production project ref |
+| secret | `PRODUCTION_SUPABASE_URL` | `https://<ref>.supabase.co` (public; a secret only so logs mask it) |
+| secret | `PRODUCTION_SUPABASE_ANON_KEY` | production anon key (public; a secret only so logs mask it) |
+| variable | `CLOUDFLARE_ACCOUNT_ID` | the Cloudflare account ID |
+
+If the first deploy reports a missing token permission, add only that one.
+
+**After the first deploy:** add a redirect rule `www.mktbd.co/*` →
+`https://mktbd.co/$1` (301), then cut over from Vercel.
 
 ## 5. Supabase staging configuration
 
