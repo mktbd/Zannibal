@@ -14,24 +14,24 @@ export const SITE = {
 } as const;
 
 /**
- * Homepage hero image. No approved photograph exists yet, so this points at
- * a TEMPORARY placeholder (public/images/hero-placeholder.jpg: a
- * procedurally rendered, out-of-focus night-market scene -- not a real
- * photo, not stock, not AI-generated) used only to judge crop, balance,
- * fade and contrast. `placeholder: true` adds a small "Placeholder image"
- * caption.
+ * Homepage hero image: public/images/home-hero.jpg, the approved photograph
+ * (Pexels photo 34114910 by roktim619): a fruit vendor at a lit
+ * night-market stall, the vendor a little left of centre. A 2048x1365
+ * JPEG (~570 KB, quality 90) resized from the 6000x4000 original, with no
+ * other change: same 3:2 frame, colours and lighting. The Cloudflare build
+ * serves local images as is (no resizing), so keep it about this size. HeroVisual crops it with object-cover and sets the
+ * object-position that keeps the vendor and stall in frame; the fade into
+ * the black copy side is applied in CSS there too.
  *
- * To swap in the approved image: put it in public/images/ (e.g.
- * home-hero.jpg, ideally >= 1600px wide, subject centre-right), set
- *   { src: "/images/home-hero.jpg", alt: "<what the photo shows>" }
- * and delete hero-placeholder.jpg. Set null to fall back to the plain
- * hatched panel. The fade into the black copy side is applied in CSS by
- * HeroVisual.
+ * To change it: put the new file in public/images/, set
+ *   { src: "/images/<file>.jpg", alt: "<what the photo shows>" }
+ * and re-check that object-position at desktop and mobile widths.
+ * `placeholder: true` captions a temporary stand-in "Placeholder image";
+ * null falls back to a plain hatched panel.
  */
 export const HERO_IMAGE: { src: string; alt: string; placeholder?: boolean } | null = {
-  src: "/images/hero-placeholder.jpg",
-  alt: "Placeholder image: an out-of-focus market street at dusk, with lit stalls and passers-by",
-  placeholder: true,
+  src: "/images/home-hero.jpg",
+  alt: "A fruit vendor sorts bananas at a lit night market stall in Bangladesh, with watermelons, papayas and pomegranates stacked behind him.",
 };
 
 /**

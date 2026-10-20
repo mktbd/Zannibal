@@ -6,8 +6,12 @@ import { HERO_IMAGE } from "@/lib/site";
  * Right-hand hero visual. With an approved image (HERO_IMAGE in
  * lib/site.ts) it fills the panel and fades into the black copy side --
  * leftwards on desktop, upwards on mobile where it sits below the copy.
- * A temporary placeholder image is captioned as such; with no image at all
- * a plainly marked neutral panel holds the space.
+ * The photo is cropped (object-cover) and positioned to keep the vendor
+ * and stall in view: centred in the 4:3 panel below lg; from lg, where the
+ * tall 44% panel shows only part of the width and its left half fades to
+ * black, shifted so the vendor sits clear of the fade. A temporary
+ * placeholder image is captioned as such; with no image at all a plainly
+ * marked neutral panel holds the space.
  */
 function HeroVisual() {
   return (
@@ -19,7 +23,7 @@ function HeroVisual() {
           fill
           preload
           sizes="(min-width: 1024px) 44vw, 100vw"
-          className="object-cover"
+          className="object-cover object-[50%_50%] lg:object-[15%_50%]"
         />
       ) : (
         <div aria-hidden="true" className="absolute inset-0 bg-[repeating-linear-gradient(135deg,transparent_0_14px,rgb(255_255_255/0.035)_14px_15px)]">
