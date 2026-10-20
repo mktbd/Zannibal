@@ -6,8 +6,8 @@ import { CoverRow } from "./cover-row";
 const COVER_SIZES = "(min-width: 1024px) 352px, (min-width: 640px) 44vw, 78vw";
 
 /**
- * Latest three published Analyses, each shown by its first slide in a tall
- * 9:16 frame with the title over a dark gradient.
+ * Latest three published Analyses, each shown by its first slide whole in a
+ * 4:5 frame (the slide format) with the title beneath.
  *
  * Layout: below lg a native horizontal scroller (scroll-snap, one card in
  * view with the next peeking in, full-bleed to the screen edges). On phones

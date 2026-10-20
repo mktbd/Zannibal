@@ -279,6 +279,10 @@ export function AnalysisViewer({ content, onClose }: { content: ViewerContent; o
                       loading={i === index ? undefined : Math.abs(i - index) <= 1 ? "eager" : "lazy"}
                       draggable={false}
                       onError={() => setFailed((state) => ({ ...state, [i]: true }))}
+                      // Inline, not only the class: vinext's next/image (Cloudflare build) sets
+                      // objectFit: "cover" inline on fill images, which beats object-contain and crops
+                      // the slide. A style prop is merged after that default.
+                      style={{ objectFit: "contain" }}
                       className="object-contain select-none"
                     />
                   </div>

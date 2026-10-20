@@ -94,8 +94,8 @@ Left: mktbd logo → Home. Right: Analysis, Case Studies.
 ### Latest Analysis
 - Automatically shows the 3 most recently published Analysis entries.
 - Each entry's cover is its first carousel slide.
-- Desktop: three tall vertical (9:16) covers side by side, proportions
-  preserved. Title sits bottom-right over a subtle black gradient.
+- Desktop: three portrait covers side by side in the slide format (4:5),
+  shown whole, each with its title beneath.
 - Clicking opens the Analysis carousel viewer.
 - "View All Analysis" bottom-right of section, links to `/analysis`.
 - Mobile: horizontal swipeable row, vertical cover proportions preserved,
@@ -157,9 +157,11 @@ Copy and behaviour as implemented in `app/(public)/page.tsx` and
   - Freshness: `revalidate = 300`, plus the CMS's existing
     `revalidatePath("/")` on every Analysis create/edit/publish/unpublish/
     delete, so changes appear immediately.
-  - Card: 9:16 frame, the first slide drawn uncropped (`object-contain` on
-    near-black), title over a bottom black gradient; the whole card links
-    to `/analysis/[slug]`. No date, tags or excerpt.
+  - Card: 4:5 frame (the 1080x1350 slide format), the first slide drawn
+    whole (`object-contain` on near-black, set inline as well so vinext's
+    `fill` default of `cover` can't crop it), nothing over the image, the
+    title beneath; the whole card links to `/analysis/[slug]`. No date,
+    tags or excerpt.
   - Missing cover: an Analysis with no slides, or whose image fails to
     load, shows the same frame as a near-black typographic card with its
     title -- no broken-image icon, no layout change.
@@ -321,8 +323,8 @@ Implemented in `app/(public)/analysis/*`, `components/analysis/*`,
   Bangladesh.") so narrow screens never strand a word. Below it, on
   off-white: search, topics, then the grid.
 - **Grid**: the homepage's cover card (`AnalysisCard`, shared with Latest
-  Analysis): first slide uncropped in a 9:16 frame, title over the dark
-  gradient, whole card a link, no date/tags/excerpt. 1 column below 600px
+  Analysis): first slide whole in a 4:5 frame, title beneath, whole card a
+  link, no date/tags/excerpt. 1 column below 600px
   (phones), 2 columns from 600px, 3 from 1024px (each cover capped at
   22rem like the homepage, uniform gaps, flush with the page container).
   600px was chosen from rendered comparisons at 430-600px: below it, two
