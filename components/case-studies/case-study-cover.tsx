@@ -37,6 +37,9 @@ export function CaseStudyCover({
           sizes={sizes}
           preload={preload}
           onError={() => setFailed(true)}
+          // Inline as well as the class: vinext's next/image (Cloudflare build) sets objectFit: "cover"
+          // inline on fill images, which would crop covers of another shape.
+          style={{ objectFit: "contain" }}
           className="object-contain"
         />
       ) : (

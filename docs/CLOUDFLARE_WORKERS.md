@@ -536,6 +536,23 @@ Results are read back from the database, `storage.objects` and the public
 site. The probe uses `qa-cms-*` records only, removes them, and refuses
 anything but the local QA stack.
 
+**Image-fit probe (part of Level 2):** `scripts/qa/image-fit-probe.mjs`
+checks, in a browser on the local Worker, that images meant to be shown
+whole really are. vinext's `next/image` sets `objectFit: "cover"` inline on
+`fill` images, which beats an `object-contain` class, so the components set
+`objectFit: "contain"` inline too (guarded by
+`tests/unit/image-fit.test.mjs`). The probe reads the **computed**
+`object-fit` and the painted geometry at 1920×1080, 1440×900, 768×1024,
+390×844 and 320×568 for:
+- the Analysis cards (homepage, archive): 4:5 frame, whole slide, title
+  beneath;
+- the viewer: whole slide inside the viewport and its stage, clear of the
+  controls, before and after moving to the next slide;
+- the Case Study covers (catalogue, product page).
+
+It is read-only and uses the seeded fixtures. Screenshots go to
+`$OUT/image-fit/`.
+
 Throttling makes timing bugs more likely to show, not certain to.
 Interacting with a control before React hydrates it is the known case
 (staging run #19: no upload request was ever sent). The browser round
