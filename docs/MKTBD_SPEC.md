@@ -133,16 +133,25 @@ Copy and behaviour as implemented in `app/(public)/page.tsx` and
   strategies, decisions and market dynamics shaping businesses in
   Bangladesh."; text link "Explore Analysis →" to `/analysis`. Image slot
   on the right (44% wide from lg, fading leftwards into black; below lg it
-  sits under the copy, fading upwards). **Hero image pending:** no approved
-  photograph exists. `HERO_IMAGE` (`lib/site.ts`) points at a temporary,
-  replacement-ready placeholder, `public/images/hero-placeholder.jpg`: a
-  procedurally rendered, out-of-focus market street at dusk (not a real
-  photo, not stock, not AI-generated), there only to judge crop, balance,
-  fade and contrast. It is captioned "Placeholder image" and its alt text
-  starts "Placeholder image:". To replace it, add the approved file to
-  `public/images/`, set `HERO_IMAGE = { src, alt }` (no `placeholder`
-  flag) and delete the placeholder; `null` falls back to a plain hatched
-  panel.
+  sits under the copy, fading upwards). **Hero image:** `HERO_IMAGE`
+  (`lib/site.ts`) is the approved photograph `public/images/home-hero.jpg`
+  (Pexels 34114910 by roktim619): a 2048x1365 JPEG, about 570 KB (quality
+  90, progressive, 4:2:0, metadata stripped), resized from the 6000x4000
+  original with no other change to its content, colours, lighting or 3:2
+  composition. It shows a fruit vendor at a lit night-market stall, alt
+  text "A fruit vendor sorts bananas at a lit night market stall in
+  Bangladesh, with watermelons, papayas and pomegranates stacked behind
+  him." It is cropped with object-cover: centred (`50% 50%`) in the 4:3
+  panel below lg, where the whole scene fits; `15% 50%` from lg, which
+  keeps the vendor clear of the leftward fade with the second vendor and
+  the fruit displays in view (checked at 1440 and 1920; 390 and 430 on
+  mobile). It keeps `preload` (the hero is the LCP element). Note: on the
+  Cloudflare build `/_next/image` redirects local images to the original,
+  so every viewport downloads this file as is -- which is why it is
+  resized from the 2.2 MB original rather than shipped full size. To
+  change the photo, set `HERO_IMAGE = { src, alt }` and re-check the
+  object-position; a `placeholder: true` flag captions a stand-in
+  "Placeholder image", and `null` falls back to a plain hatched panel.
 - **Latest Analysis** (off-white): eyebrow "Latest Analysis", heading
   "Fresh Breakdowns.", "View All →" to `/analysis` in the heading row.
   - Query (`lib/data/home.ts`, `getLatestAnalyses(3)`): cookie-less
@@ -263,9 +272,9 @@ audited and kept; only global/shared pieces changed.
      (a checkerboard painted into the image, not transparency) and were not
      modified or used. Once a genuine transparent PNG/SVG is supplied this
      is a small asset swap in `site-header.tsx` / `site-footer.tsx`.
-  2. **FINAL HOMEPAGE HERO IMAGE REQUIRED** -- the hero keeps the temporary
-     `public/images/hero-placeholder.jpg`; no layout problems were found
-     around it at the tested widths.
+  2. ~~FINAL HOMEPAGE HERO IMAGE REQUIRED~~ -- done: the approved
+     photograph `public/images/home-hero.jpg` replaced the temporary
+     placeholder (see the homepage hero above).
 
 ## 4. Analysis (`/analysis`)
 
@@ -1442,7 +1451,7 @@ lib/
                               formatting
   site.ts                    Public identity: name, tagline, primary nav,
                               official SOCIAL_LINKS, contact email,
-                              HERO_IMAGE (temporary placeholder)
+                              HERO_IMAGE (approved hero photo)
   analysis-cover.ts          coverSlidePath(): lowest-position slide
   archive-core.ts            Shared pure archive helpers: normalisation,
                               word matching, topic list, paging, de-dup,
@@ -1491,7 +1500,7 @@ lib/
 
 public/
   images/
-    hero-placeholder.jpg       TEMPORARY hero stand-in (see section 3)
+    home-hero.jpg              Approved homepage hero photo (see section 3)
 
 tests/
   unit/                      node:test unit tests for slug/validation/media/
@@ -2355,11 +2364,8 @@ domain for `metadataBase` are still to be provided.
      background, in a white variant (black header/footer) and a black
      variant -- keeping its natural proportions and accessible text.
      The Admin CMS wordmark is out of scope.
-  2. **Final hero photograph.** The homepage hero uses the temporary
-     `public/images/hero-placeholder.jpg` (captioned "Placeholder image").
-     Replace it with the approved photograph: add the file to
-     `public/images/`, point `HERO_IMAGE` in `lib/site.ts` at it with real
-     alt text and no `placeholder` flag, and delete the placeholder.
+  2. ~~Final hero photograph.~~ Done: `public/images/home-hero.jpg`
+     replaced the temporary placeholder (see section 3).
 - Testing: `npm test` (17), lint, typecheck, production build; homepage QA
   against the local Supabase stack at 375 / 768 / 1024 / 1280 / 1440 with
   fixtures (4 published Analyses with different dates, a newer draft,
