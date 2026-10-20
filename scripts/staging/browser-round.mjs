@@ -27,7 +27,9 @@ const ACCESS = process.env.CF_ACCESS_CLIENT_ID ? { "CF-Access-Client-Id": proces
 const ADMIN_EMAIL = process.env.STAGING_ADMIN_EMAIL, ADMIN_PASSWORD = process.env.STAGING_ADMIN_PASSWORD;
 const LOGIN_PATH = "/admin/login";
 const LOGIN_ERRORS = ["invalid_credentials", "unauthorized", "missing_fields"];
-const ADMIN_PAGES = ["/admin", "/admin/analysis", "/admin/articles", "/admin/case-studies", "/admin/orders", "/admin/tags"];
+// Each admin page and the <h1> its PageHeader renders inside #admin-main (components/admin/page-header.tsx).
+const ADMIN_HEADINGS = { "/admin": "Dashboard", "/admin/analysis": "Analysis", "/admin/articles": "Articles", "/admin/case-studies": "Case Studies", "/admin/orders": "Orders", "/admin/tags": "Tags" };
+const ADMIN_PAGES = Object.keys(ADMIN_HEADINGS);
 // Checks that need a signed-in admin; recorded as failures (never passes) when login fails.
 const ORDER_CHECKS = SMOKE ? ["order status change saved (existing synthetic order)", "order status restored (saved value)"] : ["order status change (Pending -> Invalid)"];
 const ADMIN_DEPENDENT = [...ADMIN_PAGES.map((p) => `admin page ${p}`), ...ORDER_CHECKS, "CMS edit saved (title persisted)", "CMS edit visible on the public page within 60 s", "CMS title restored (saved value)", "cover upload reaches Storage", "temporary cover upload deleted from Storage"];
@@ -56,6 +58,26 @@ const redactText = (t) => String(t || "").replace(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9
 const interactive = (page, selector, timeout = 15000) =>
   page.waitForFunction((sel) => { const el = document.querySelector(sel); return !!el && Object.keys(el).some((k) => k.startsWith("__reactProps$")); }, selector, { timeout, polling: "raf" }).then(() => true, () => false);
 const THROTTLE = args.includes("--throttle");
+
+/**
+ * One admin page: HTTP 200, the requested path, its own <h1> inside #admin-main, and no error boundary.
+ * The boundary can replace the server-rendered page after hydration, so wait for whichever appears first,
+ * then for the load event, and read both again.
+ */
+async function adminPage(page, path, heading) {
+  const res = await page.goto(BASE + path);
+  const final = pathOf(page.url());
+  const main = page.locator("#admin-main");
+  const own = main.getByRole("heading", { level: 1, name: heading, exact: true });
+  const boundary = main.locator('[role="alert"]').filter({ has: page.getByRole("heading", { level: 1 }) });
+  await Promise.any([own.waitFor({ timeout: 15000 }), boundary.waitFor({ timeout: 15000 })]).catch(() => {});
+  await page.waitForLoadState("load").catch(() => {});
+  const failed = await boundary.count() > 0;
+  const shown = !failed && await own.isVisible().catch(() => false);
+  const h1 = redactText(await main.getByRole("heading", { level: 1 }).first().textContent({ timeout: 1000 }).catch(() => "")) || "none";
+  const why = failed ? `; ADMIN ERROR BOUNDARY rendered ("${h1}")` : shown ? "" : `; expected heading "${heading}", found "${h1}"`;
+  check(`admin page ${path}`, res && res.status() === 200 && final === path && shown, `${res?.status()} ${final}; h1 "${h1}"${why}`);
+}
 
 /** What a response reveals about its origin: app JSON body, app security headers, edge ray id. */
 async function fingerprint(res) {
@@ -309,8 +331,10 @@ async function run() {
       for (const name of ADMIN_DEPENDENT) check(name, false, "not run: admin login failed");
     } else {
       step = "admin pages";
-      // A redirect to the login page answers 200 too, so the final path must be the page requested.
-      for (const p of ADMIN_PAGES) { const res = await page.goto(BASE + p); const final = pathOf(page.url()); check(`admin page ${p}`, res && res.status() === 200 && final === p, `${res?.status()} ${final}`); }
+      // A redirect to the login page answers 200 too, so the final path must be the page requested. So does
+      // the (dashboard) error boundary (app/admin/(dashboard)/error.tsx, an alert with its own <h1>), so the
+      // page must also show its own heading and no error boundary.
+      for (const p of ADMIN_PAGES) await adminPage(page, p, ADMIN_HEADINGS[p]);
       // Status change: the full round's own new order; the smoke round an existing synthetic order.
       step = "order status change";
       if (SMOKE) await smokeOrderStatus(page);
