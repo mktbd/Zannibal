@@ -230,6 +230,13 @@ touches the database (migrations stay in `supabase-migrate.yml`).
   `BKASH_PAYMENT_NUMBER` is always the non-payable placeholder, so
   purchasing stays paused. Enabling purchases means changing that line.
 
+**Analytics.** `SITE_ENV=production` also turns on Google Tag Manager and
+its CSP origins (`lib/analytics.ts`; `docs/MKTBD_SPEC.md` section 9,
+"Analytics (Google Tag Manager)"). The staging Worker (`SITE_ENV=preview`)
+never loads it. Publish an empty container version before the first
+production deploy that carries it, so `gtm.js` returns 200 and nothing
+runs until the tags are tested in Preview.
+
 **Custom domains:** `mktbd.co` and `www.mktbd.co` are declared in
 `cloudflare.config.ts`. With a list configured, every deploy replaces the
 Worker's custom domains with exactly that list. A domain added only in the

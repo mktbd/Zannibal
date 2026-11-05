@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { PublicShell } from "@/components/layout/public-shell";
+import { GoogleTagManager } from "@/components/site/google-tag-manager";
 
 // Public pages set their own titles later; they render as "<title> | mktbd".
 export const metadata: Metadata = {
@@ -12,12 +13,18 @@ export const viewport: Viewport = {
 
 /**
  * Shell for every public route (/, /analysis, /case-studies and their
- * [slug] pages). /admin has its own layout and never renders inside this.
+ * [slug] pages). /admin has its own layout and never renders inside this --
+ * which is why analytics (production only) is loaded here and nowhere else.
  */
 export default function PublicLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  return <PublicShell>{children}</PublicShell>;
+  return (
+    <>
+      <PublicShell>{children}</PublicShell>
+      <GoogleTagManager />
+    </>
+  );
 }

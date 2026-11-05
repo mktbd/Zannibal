@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 import { isIndexableDeployment } from "./lib/seo";
 import { resolveDeploymentEnv } from "./lib/deployment";
 import { securityHeaders } from "./lib/security-headers";
+import { isAnalyticsEnabled } from "./lib/analytics";
 
 /**
  * Public Storage images (Analysis covers) are served through Next's image
@@ -57,6 +58,8 @@ const nextConfig: NextConfig = {
         supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL,
         development: process.env.NODE_ENV === "development",
         productionHttps: deploymentEnv === "production",
+        // GTM's origins (lib/analytics.ts): production only, like GTM itself.
+        analytics: isAnalyticsEnabled(deploymentEnv),
       }),
     };
     // vinext's matcher does not match "/" with "/:path*" (Next.js does), so

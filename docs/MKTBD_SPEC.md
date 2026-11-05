@@ -1847,6 +1847,10 @@ media-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'self';
 form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests
 ```
 
+The production deployment also allows the Google Tag Manager, GA4, Meta
+Pixel and CookieYes origins (`ANALYTICS_CSP_SOURCES`; see "Analytics
+(Google Tag Manager)" below). Staging, previews and local builds don't.
+
 - `'unsafe-eval'` is never allowed outside `next dev` (React's dev build
   needs it; the dev server also adds `ws:` for hot reload).
   `upgrade-insecure-requests` is added only when Supabase is https.
@@ -1925,6 +1929,84 @@ the local database is lost. **Future runs of destructive local test
 scripts require explicit approval** beforehand (they ran during 5D
 verification without separate approval and are disclosed here).
 
+### Analytics (Google Tag Manager)
+
+Google Tag Manager (container `GTM-TWW2NJKP`) is the **only** analytics
+integration in code. GA4 (`G-HVTBNTC92D`), Meta Pixel and the CookieYes
+consent banner are configured inside the container, never in the app.
+
+**In code** (`lib/analytics.ts`, `components/site/google-tag-manager.tsx`):
+- **Production only.** `isAnalyticsEnabled()` is true only when the
+  deployment env (`SITE_ENV`) is exactly `production`. Staging, previews,
+  local builds and tests never load the container.
+- **Public pages only.** `app/(public)/layout.tsx` is the one place that
+  renders it. `/admin` is never inside that layout, and no public code
+  links or navigates to `/admin`, so an admin page never shares a document
+  with GTM. The bootstrap also returns early on `/admin` paths.
+  `tests/unit/analytics-isolation.test.mjs` enforces all of this.
+- **Consent first.** Before `gtm.js` loads, the bootstrap sets Consent Mode
+  v2 defaults: `ad_storage`, `ad_user_data`, `ad_personalization`,
+  `analytics_storage`, `functionality_storage` and
+  `personalization_storage` denied (`security_storage` granted),
+  `wait_for_update: 500`, plus `ads_data_redaction`. It runs once per
+  document (`next/script`, `afterInteractive`), so client-side navigation
+  never reloads GTM or resets consent.
+- **In-page blocklist.** `gtm.blocklist: ["customScripts"]` disables
+  Custom HTML tags and Custom JavaScript variables whatever is published,
+  so only Google's tags and sandboxed gallery templates can run. This also
+  keeps `'unsafe-eval'` out of the CSP.
+- **The app pushes nothing else** to the dataLayer: no page views, no
+  `config`. Page views are the container's job.
+- **CSP** (`ANALYTICS_CSP_SOURCES`, production only): `script-src` adds
+  `www.googletagmanager.com`, `connect.facebook.net`, `cdn-cookieyes.com`;
+  `connect-src` adds `www.googletagmanager.com`, `*.google-analytics.com`,
+  `*.analytics.google.com`, `www.facebook.com`, `cdn-cookieyes.com`,
+  `log.cookieyes.com`; `img-src` adds `www.googletagmanager.com`,
+  `*.google-analytics.com`, `www.facebook.com`, `cdn-cookieyes.com`. The
+  only wildcards are GA4's regional collection hosts, never in
+  `script-src`. Nothing is added for GTM Preview or Tag Assistant. Add an
+  origin only for a violation observed from an expected vendor.
+
+**In the container** (basic consent mode: no optional tag runs, and no
+cookieless ping is sent, before consent):
+
+| Item | Configuration |
+|---|---|
+| CookieYes CMP (gallery template) | Trigger **Consent Initialization – All Pages**; no consent requirement, so the banner shows before any choice. Defaults set to denied, matching the bootstrap. Reject must be as easy as Accept. |
+| GA4 Google tag (`G-HVTBNTC92D`) | Requires `analytics_storage`. Triggers: **Initialization – All Pages** and the CookieYes consent-update event, with tag firing option **Once per page**. Sends the initial `page_view` once, whether consent existed at load or was given later. |
+| GA4 data stream | Enhanced Measurement **off** for "page changes based on browser history events". Turn other automatic events off too, so nothing is sent after consent is withdrawn until the next page load. |
+| GA4 `page_view` (event tag) | Requires `analytics_storage`. Trigger: **History Change** where `History Old URL` ≠ `History New URL` and the change isn't fragment-only. |
+| Meta Pixel (gallery template) | Requires `ad_storage` and `ad_user_data`. Same triggers and **Once per page** as the Google tag; sends the initial `PageView`. Automatic pushState tracking and Automatic Events off if the template allows, so there is one source of page views. |
+| Meta `PageView` on history | Requires `ad_storage` and `ad_user_data`; same History Change trigger as GA4. Add only if the Pixel's automatic history tracking is off; otherwise rely on it and add nothing. |
+| Exceptions on every tag except CookieYes | Page Path starts with `/admin`; Page Hostname doesn't match `^(www\.)?mktbd\.co$`. |
+
+**Governance.** Publishing is limited to one or two named people, with
+2-step verification required to publish. Changes go through a workspace and
+a version note. Review each gallery template's permissions (injected script
+URLs, cookies read, globals) on import and at every update. Rollback is
+republishing the previous container version, with no deploy needed.
+
+**Known risk.** The injected vendor scripts (gtag.js, fbevents.js,
+CookieYes) run unsandboxed on public pages. The admin Supabase session
+cookie isn't HttpOnly (an `@supabase/ssr` default), so an admin who browses
+the public site while logged in exposes it to them. Tracked as a separate
+security task: an HttpOnly admin session plus signed upload URLs. Until
+then, admins should use a separate browser profile for the CMS.
+
+**Verification.** `tests/unit/analytics.test.mjs` runs the bootstrap in a
+sandbox and pins the CSP lists; the isolation test covers routing. After a
+production deploy, use GTM Preview on mktbd.co **before** publishing tags
+(an empty published version keeps real visitors unaffected) and check that:
+- the banner shows before any tag;
+- Reject and withdrawal fire nothing optional;
+- a late Accept gives exactly one initial `page_view` and one `PageView`;
+- each URL change gives exactly one more, and a same-URL replace none;
+- `/admin` gets none;
+- the console shows no CSP violations.
+
+Then confirm in GA4 DebugView, Meta Pixel Helper and Events Manager → Test
+Events.
+
 ---
 
 ## 10. Security Rules
@@ -1948,6 +2030,10 @@ information. Security is a first-class requirement, not an afterthought.
   "Performance, accessibility and security"). Keep `'unsafe-eval'` out of
   production, and never render CMS content as raw HTML -- the CSP allows
   inline scripts, so it is not the defence against injection.
+- Third-party scripts load only through Google Tag Manager, on public pages
+  of the production deployment, after consent (section 9, "Analytics
+  (Google Tag Manager)"). Never add analytics or tag scripts to `/admin`, and
+  never link public pages to `/admin` by client-side navigation.
 
 ---
 
