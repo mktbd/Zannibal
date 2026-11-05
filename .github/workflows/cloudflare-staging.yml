@@ -266,7 +266,7 @@ jobs:
     # environment, secrets and isolation gate as the full test.
     needs: authorize
     if: inputs.mode == 'smoke-staging'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     environment: staging-test
     env:
@@ -320,7 +320,7 @@ jobs:
   test:
     needs: authorize
     if: inputs.mode == 'test-staging'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     environment: staging-test
     env:
