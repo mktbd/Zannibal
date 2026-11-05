@@ -19,7 +19,30 @@ export interface SecurityHeaderOptions {
   development: boolean;
   /** Production deployment (lib/deployment.ts: SITE_ENV, else VERCEL_ENV): add HSTS. */
   productionHttps: boolean;
+  /** Google Tag Manager runs on this deployment (lib/analytics.ts: production only). */
+  analytics?: boolean;
 }
+
+/**
+ * Origins the GTM container's tags need (lib/analytics.ts): GTM itself and
+ * the GA4 Google tag, Meta Pixel, and the CookieYes banner. Exact hosts,
+ * except GA4's collection endpoints, which are regional
+ * (region1.google-analytics.com, ...) -- those wildcards are limited to
+ * connect-src and img-src, never script-src. Nothing for GTM Preview or
+ * Tag Assistant is added permanently.
+ */
+export const ANALYTICS_CSP_SOURCES = {
+  script: ["https://www.googletagmanager.com", "https://connect.facebook.net", "https://cdn-cookieyes.com"],
+  connect: [
+    "https://www.googletagmanager.com",
+    "https://*.google-analytics.com",
+    "https://*.analytics.google.com",
+    "https://www.facebook.com",
+    "https://cdn-cookieyes.com",
+    "https://log.cookieyes.com",
+  ],
+  img: ["https://www.googletagmanager.com", "https://*.google-analytics.com", "https://www.facebook.com", "https://cdn-cookieyes.com"],
+} as const;
 
 function originOf(url: string | undefined): string | null {
   if (!url) return null;
@@ -30,17 +53,18 @@ function originOf(url: string | undefined): string | null {
   }
 }
 
-export function contentSecurityPolicy({ supabaseUrl, development }: SecurityHeaderOptions): string {
+export function contentSecurityPolicy({ supabaseUrl, development, analytics = false }: SecurityHeaderOptions): string {
   const supabase = originOf(supabaseUrl);
   const httpsSupabase = supabase?.startsWith("https://") ?? false;
+  const tags = analytics ? ANALYTICS_CSP_SOURCES : { script: [], connect: [], img: [] };
   const directives: [string, string[]][] = [
     ["default-src", ["'self'"]],
-    ["script-src", ["'self'", "'unsafe-inline'", ...(development ? ["'unsafe-eval'"] : [])]],
+    ["script-src", ["'self'", "'unsafe-inline'", ...(development ? ["'unsafe-eval'"] : []), ...tags.script]],
     ["style-src", ["'self'", "'unsafe-inline'"]],
     // data: for tiny inline images; blob: for upload previews in the CMS.
-    ["img-src", ["'self'", "data:", "blob:", ...(supabase ? [supabase] : [])]],
+    ["img-src", ["'self'", "data:", "blob:", ...(supabase ? [supabase] : []), ...tags.img]],
     ["font-src", ["'self'"]],
-    ["connect-src", ["'self'", ...(supabase ? [supabase] : []), ...(development ? ["ws:"] : [])]],
+    ["connect-src", ["'self'", ...(supabase ? [supabase] : []), ...(development ? ["ws:"] : []), ...tags.connect]],
     ["media-src", ["'self'"]],
     ["object-src", ["'none'"]],
     ["frame-src", ["'none'"]],
