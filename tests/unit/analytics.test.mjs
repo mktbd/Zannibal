@@ -31,8 +31,9 @@ test("bootstrap: consent defaults (all optional storage denied) and the allowlis
   assert.equal(consent[2].security_storage, "granted");
   assert.equal(consent[2].wait_for_update, 500);
   assert.deepEqual(redaction, ["set", "ads_data_redaction", true]);
-  // Custom HTML / Custom JS stay blocked; only sandboxed template JS is re-enabled (no other class allowlisted).
-  assert.deepEqual(restrictions, { "gtm.allowlist": ["sandboxedScripts"], "gtm.blocklist": ["customScripts"] });
+  // Custom HTML / Custom JS stay blocked. The allowlist must name google (built-in variables and triggers,
+  // Google's tags) as well as sandboxedScripts (gallery templates), or every built-in variable is undefined.
+  assert.deepEqual(restrictions, { "gtm.allowlist": ["google", "sandboxedScripts"], "gtm.blocklist": ["customScripts"] });
   assert.equal(start.event, "gtm.js");
   assert.equal(dataLayer.length, 4, "nothing else is pushed: no page_view, no config");
   assert.equal(appended.length, 1);
