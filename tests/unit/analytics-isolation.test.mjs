@@ -22,6 +22,15 @@ test("only the public layout renders GoogleTagManager", () => {
   assert.deepEqual(users, ["app/(public)/layout.tsx"]);
 });
 
+test("only GoogleTagManager (production-gated) renders AnalyticsEvents; only it and the bootstrap push to the dataLayer", () => {
+  const users = source.filter((f) => f !== "components/site/analytics-events.tsx" && /<AnalyticsEvents\b/.test(readFileSync(join(ROOT, f), "utf8")));
+  assert.deepEqual(users, ["components/site/google-tag-manager.tsx"]);
+  const gtm = readFileSync(join(ROOT, "components/site/google-tag-manager.tsx"), "utf8");
+  assert.match(gtm, /if \(!isAnalyticsEnabled\(currentDeploymentEnv\(\)\)\) return null;[\s\S]*<AnalyticsEvents \/>/);
+  const pushers = source.filter((f) => /dataLayer\b[^\n]*\.push\(/.test(readFileSync(join(ROOT, f), "utf8")));
+  assert.deepEqual(pushers.sort(), ["components/site/analytics-events.tsx", "lib/analytics.ts"]);
+});
+
 test("no code outside the admin area links or navigates to /admin", () => {
   const offenders = [];
   for (const f of source.filter((f) => !isAdminCode(f) && f !== "app/robots.ts")) {
