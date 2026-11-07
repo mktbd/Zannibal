@@ -12,8 +12,11 @@
  * - Custom HTML tags and Custom JavaScript variables are blocked from here
  *   (gtm.blocklist: customScripts), whatever is published in the container.
  *   Blocklisting any class also blocks custom-template sandboxed JavaScript,
- *   so gtm.allowlist: sandboxedScripts re-enables gallery templates
- *   (CookieYes, Meta Pixel) without restricting any other class. See
+ *   so the allowlist names sandboxedScripts to re-enable gallery templates
+ *   (CookieYes, Meta Pixel). Once an allowlist is set, only listed tags,
+ *   triggers and variables run, so it also names google: Google's tags (GA4),
+ *   the built-in variables (Event, URL, Data Layer...) that trigger
+ *   conditions read, and the History listener are in that class. See
  *   https://developers.google.com/tag-platform/tag-manager/web/restrict
  *
  * Import-free, so node:test covers it.
@@ -52,7 +55,7 @@ export function gtmBootstrapScript(containerId: string = GTM_CONTAINER_ID): stri
     wait_for_update: 500
   });
   w.gtag("set", "ads_data_redaction", true);
-  w.dataLayer.push({ "gtm.allowlist": ["sandboxedScripts"], "gtm.blocklist": ["customScripts"] });
+  w.dataLayer.push({ "gtm.allowlist": ["google", "sandboxedScripts"], "gtm.blocklist": ["customScripts"] });
   w.dataLayer.push({ "gtm.start": new Date().getTime(), event: "gtm.js" });
   var s = d.createElement("script");
   s.async = true;

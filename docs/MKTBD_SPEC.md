@@ -1955,10 +1955,15 @@ consent banner are configured inside the container, never in the app.
   `gtm.blocklist: ["customScripts"]` disables Custom HTML tags and Custom
   JavaScript variables whatever is published. Google documents that
   blocklisting any class also implicitly blocks the sandboxed JavaScript of
-  custom templates, so `gtm.allowlist: ["sandboxedScripts"]` re-enables
-  gallery templates (CookieYes, Meta Pixel); that class applies no
-  allowlist conditions to other classes, and the blocklist still wins.
-  Only Google's tags and sandboxed gallery templates can run. This also
+  custom templates, so `gtm.allowlist: ["google", "sandboxedScripts"]`
+  re-enables gallery templates (CookieYes, Meta Pixel). Once any allowlist
+  is set, only tags, triggers and variables in it run, so `google` must be
+  listed too: Google's tags (`gaawc`, `gaawe`), the built-in variables
+  (Event, URL, Data Layer, Constant, Lookup Table...) and the History
+  listener are in that class. With `sandboxedScripts` alone, production
+  Preview showed every built-in variable `undefined` and the CookieYes
+  Consent Initialization trigger condition false. The blocklist still
+  wins. Only Google's tags and sandboxed gallery templates can run. This also
   keeps `'unsafe-eval'` out of the CSP. Source:
   https://developers.google.com/tag-platform/tag-manager/web/restrict
 - **The app pushes nothing else** to the dataLayer: no page views, no
