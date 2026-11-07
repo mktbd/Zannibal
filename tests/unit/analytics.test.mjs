@@ -21,9 +21,9 @@ test("GTM runs only on the production deployment", () => {
   for (const env of [undefined, "", "preview", "staging", "development", "Production"]) assert.equal(isAnalyticsEnabled(env), false, String(env));
 });
 
-test("bootstrap: consent defaults (all optional storage denied) and the blocklist come before gtm.js", () => {
+test("bootstrap: consent defaults (all optional storage denied) and the allowlist/blocklist come before gtm.js", () => {
   const { dataLayer, appended } = run("/");
-  const [consent, redaction, blocklist, start] = dataLayer;
+  const [consent, redaction, restrictions, start] = dataLayer;
   assert.deepEqual(consent.slice(0, 2), ["consent", "default"]);
   for (const type of ["ad_storage", "ad_user_data", "ad_personalization", "analytics_storage", "functionality_storage", "personalization_storage"]) {
     assert.equal(consent[2][type], "denied", type);
@@ -31,7 +31,8 @@ test("bootstrap: consent defaults (all optional storage denied) and the blocklis
   assert.equal(consent[2].security_storage, "granted");
   assert.equal(consent[2].wait_for_update, 500);
   assert.deepEqual(redaction, ["set", "ads_data_redaction", true]);
-  assert.deepEqual(blocklist, { "gtm.blocklist": ["customScripts"] });
+  // Custom HTML / Custom JS stay blocked; only sandboxed template JS is re-enabled (no other class allowlisted).
+  assert.deepEqual(restrictions, { "gtm.allowlist": ["sandboxedScripts"], "gtm.blocklist": ["customScripts"] });
   assert.equal(start.event, "gtm.js");
   assert.equal(dataLayer.length, 4, "nothing else is pushed: no page_view, no config");
   assert.equal(appended.length, 1);
