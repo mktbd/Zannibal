@@ -8,8 +8,8 @@ import { AnalyticsEvents } from "@/components/site/analytics-events";
  * (lib/analytics.ts). Renders nothing on staging, previews and local builds.
  * After hydration, so it never delays the page; once per document, so
  * client-side navigation between public pages doesn't reload it. Also
- * renders AnalyticsEvents, the only other dataLayer pushes (route changes and
- * consent-ready), under the same production-only gate.
+ * renders AnalyticsEvents, the only other dataLayer push (route changes),
+ * under the same production-only gate.
  */
 export function GoogleTagManager() {
   if (!isAnalyticsEnabled(currentDeploymentEnv())) return null;

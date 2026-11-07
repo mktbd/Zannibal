@@ -1966,24 +1966,27 @@ consent banner are configured inside the container, never in the app.
   wins. Only Google's tags and sandboxed gallery templates can run. This also
   keeps `'unsafe-eval'` out of the CSP. Source:
   https://developers.google.com/tag-platform/tag-manager/web/restrict
-- **Two app events, nothing else** (`lib/analytics-events.ts`,
+- **One app event, nothing else** (`lib/analytics-events.ts`,
   `components/site/analytics-events.tsx`, rendered only by
-  `GoogleTagManager`, so production public pages only). No `config`, no
-  GA4 or Meta calls; consent still gates every tag.
-  - `mktbd_route_change` (`page_path`, `page_location` without query or
-    fragment, `page_title`): once per completed client-side change of path
-    (links, back/forward), never for the first page, never twice for the
-    same path. Needed because vinext's router keeps its own copy of
-    `history.pushState` from before GTM loads, so GTM's History Change
-    listener never sees link navigation.
-  - `mktbd_consent_ready` (event name only): after a CookieYes choice that
-    accepts `analytics` or `advertisement`, pushed once CookieYes's
-    `cookie_consent_update` for that choice is in the dataLayer queue.
-    CookieYes's grant is applied after its own event is processed, so tags
-    on `cookie_consent_update` are still denied (production Preview); GTM
-    applies a template's consent update before any item queued after it,
-    so tags on `mktbd_consent_ready` see it. If CookieYes's event doesn't
-    arrive within 3 s, nothing is pushed.
+  `GoogleTagManager`, so production public pages only): no `config`, no
+  GA4 or Meta calls, no consent logic; consent still gates every tag.
+  `mktbd_route_change` carries `page_path`, `page_location` (without query
+  string or fragment) and `page_title`. It is pushed once per completed
+  client-side change of path (links, back/forward), never for the first
+  page and never twice for the same path. Needed because vinext's router
+  keeps its own copy of `history.pushState` from before GTM loads, so GTM's
+  History Change listener never sees link navigation.
+- **Consent-ready is GTM's job** (`docs/gtm/mktbd-consent-ready.tpl`, a
+  custom template). CookieYes's GTM template only restores a stored choice;
+  a banner click is applied by CookieYes's own script, and in production
+  Preview tags on its `cookie_consent_update` event still saw "denied". The
+  template registers `addConsentListener` for `analytics_storage`,
+  `ad_storage` and `ad_user_data` on Consent Initialization (before any
+  update is applied) and, after a change to granted, pushes one
+  `mktbd_consent_ready` per consent update (`callLater` coalesces the
+  types of one update). Permissions: read-only consent for those three
+  types, and `dataLayer` read/write. It is sandboxed, so the bootstrap's
+  `sandboxedScripts` allowlist covers it.
 - **CSP** (`ANALYTICS_CSP_SOURCES`, production only): `script-src` adds
   `www.googletagmanager.com`, `connect.facebook.net`, `cdn-cookieyes.com`;
   `connect-src` adds `www.googletagmanager.com`, `*.google-analytics.com`,
@@ -2000,12 +2003,15 @@ cookieless ping is sent, before consent):
 | Item | Configuration |
 |---|---|
 | CookieYes CMP (gallery template) | Trigger **Consent Initialization – All Pages**; no consent requirement, so the banner shows before any choice. Defaults set to denied, matching the bootstrap. Reject must be as easy as Accept. |
+| mktbd consent ready (custom template, `docs/gtm/mktbd-consent-ready.tpl`) | Trigger **Consent Initialization – All Pages**; no consent requirement (it only listens); same exceptions as the other tags. |
 | GA4 Google tag (`G-HVTBNTC92D`) | Requires `analytics_storage`. Triggers: **Initialization – All Pages** and Custom Event **`mktbd_consent_ready`**, with tag firing option **Once per page**. Sends the initial `page_view` once, whether consent existed at load or was given later. |
 | GA4 data stream | Enhanced Measurement **off** for "page changes based on browser history events". Turn other automatic events off too, so nothing is sent after consent is withdrawn until the next page load. |
 | GA4 `page_view` (event tag) | Requires `analytics_storage`. Trigger: Custom Event **`mktbd_route_change`**. Event parameters `page_location` and `page_title` from Data Layer Variables of the same names. No History Change trigger. |
-| Meta Pixel (gallery template) | Requires `ad_storage` and `ad_user_data`. Same triggers and **Once per page** as the Google tag; sends the initial `PageView`. Automatic pushState tracking and Automatic Events off if the template allows, so there is one source of page views. |
-| Meta `PageView` on navigation | Requires `ad_storage` and `ad_user_data`; trigger Custom Event **`mktbd_route_change`**, firing option Unlimited. |
-| Exceptions on every tag except CookieYes | Page Path starts with `/admin`; Page Hostname doesn't match `^(www\.)?mktbd\.co$`. |
+| Meta Pixel (gallery template) | Requires `ad_storage` and `ad_user_data`. Same triggers and **Once per page** as the Google tag; sends the initial `PageView`. Automatic configuration, pushState tracking and Automatic Events off if the template allows, so there is one source of page views and nothing is collected automatically. Exceptions: the common two **and both purchase-page exceptions** (below). |
+| Meta `PageView` on navigation | Requires `ad_storage` and `ad_user_data`; trigger Custom Event **`mktbd_route_change`**, firing option Unlimited. Exceptions: the common two **and both purchase-page exceptions**. Check Back/Forward in Meta's Test events: the Pixel's own history tracking could add a second PageView there. Change anything only if it does. |
+| Not used | **History Change** triggers (vinext bypasses them) and triggers on CookieYes's `cookie_consent_update` (too early for consent). |
+| Exceptions on every tag except CookieYes | Page Path starts with `/admin`; Page Hostname doesn't match `^(www\.)?mktbd\.co$`. Both are Custom Event triggers on `.*` (regex), so they apply to every event, including `mktbd_consent_ready` and `mktbd_route_change`. |
+| Purchase-page exceptions (both Meta `PageView` tags) | **Exclude - Meta purchase page**: Custom Event `.*` (regex), **Page Path** matches RegEx `^/case-studies/[^/]+/buy/?$`. Covers page loads, consent-ready and route changes: vinext writes the URL in a layout effect before the route tracker's effect pushes `mktbd_route_change`, so Page Path is already the new page. **Exclude - Meta purchase page (route event)**: Custom Event `mktbd_route_change`, Data Layer Variable **`page_path`** matches the same RegEx, so the exclusion holds even if the URL were written later. GA4 is not excluded. These stop GTM's Meta tags only: an `fbevents.js` already loaded on an earlier page keeps running, so its automatic configuration, automatic events and history tracking must be off, and the purchase page checked with Meta Pixel Helper / Test events. |
 
 **Governance.** Publishing is limited to one or two named people, with
 2-step verification required to publish. Changes go through a workspace and
