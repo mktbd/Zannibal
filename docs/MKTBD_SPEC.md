@@ -1966,8 +1966,24 @@ consent banner are configured inside the container, never in the app.
   wins. Only Google's tags and sandboxed gallery templates can run. This also
   keeps `'unsafe-eval'` out of the CSP. Source:
   https://developers.google.com/tag-platform/tag-manager/web/restrict
-- **The app pushes nothing else** to the dataLayer: no page views, no
-  `config`. Page views are the container's job.
+- **Two app events, nothing else** (`lib/analytics-events.ts`,
+  `components/site/analytics-events.tsx`, rendered only by
+  `GoogleTagManager`, so production public pages only). No `config`, no
+  GA4 or Meta calls; consent still gates every tag.
+  - `mktbd_route_change` (`page_path`, `page_location` without query or
+    fragment, `page_title`): once per completed client-side change of path
+    (links, back/forward), never for the first page, never twice for the
+    same path. Needed because vinext's router keeps its own copy of
+    `history.pushState` from before GTM loads, so GTM's History Change
+    listener never sees link navigation.
+  - `mktbd_consent_ready` (event name only): after a CookieYes choice that
+    accepts `analytics` or `advertisement`, pushed once CookieYes's
+    `cookie_consent_update` for that choice is in the dataLayer queue.
+    CookieYes's grant is applied after its own event is processed, so tags
+    on `cookie_consent_update` are still denied (production Preview); GTM
+    applies a template's consent update before any item queued after it,
+    so tags on `mktbd_consent_ready` see it. If CookieYes's event doesn't
+    arrive within 3 s, nothing is pushed.
 - **CSP** (`ANALYTICS_CSP_SOURCES`, production only): `script-src` adds
   `www.googletagmanager.com`, `connect.facebook.net`, `cdn-cookieyes.com`;
   `connect-src` adds `www.googletagmanager.com`, `*.google-analytics.com`,
@@ -1984,11 +2000,11 @@ cookieless ping is sent, before consent):
 | Item | Configuration |
 |---|---|
 | CookieYes CMP (gallery template) | Trigger **Consent Initialization – All Pages**; no consent requirement, so the banner shows before any choice. Defaults set to denied, matching the bootstrap. Reject must be as easy as Accept. |
-| GA4 Google tag (`G-HVTBNTC92D`) | Requires `analytics_storage`. Triggers: **Initialization – All Pages** and the CookieYes consent-update event, with tag firing option **Once per page**. Sends the initial `page_view` once, whether consent existed at load or was given later. |
+| GA4 Google tag (`G-HVTBNTC92D`) | Requires `analytics_storage`. Triggers: **Initialization – All Pages** and Custom Event **`mktbd_consent_ready`**, with tag firing option **Once per page**. Sends the initial `page_view` once, whether consent existed at load or was given later. |
 | GA4 data stream | Enhanced Measurement **off** for "page changes based on browser history events". Turn other automatic events off too, so nothing is sent after consent is withdrawn until the next page load. |
-| GA4 `page_view` (event tag) | Requires `analytics_storage`. Trigger: **History Change** where `History Old URL` ≠ `History New URL` and the change isn't fragment-only. |
+| GA4 `page_view` (event tag) | Requires `analytics_storage`. Trigger: Custom Event **`mktbd_route_change`**. Event parameters `page_location` and `page_title` from Data Layer Variables of the same names. No History Change trigger. |
 | Meta Pixel (gallery template) | Requires `ad_storage` and `ad_user_data`. Same triggers and **Once per page** as the Google tag; sends the initial `PageView`. Automatic pushState tracking and Automatic Events off if the template allows, so there is one source of page views. |
-| Meta `PageView` on history | Requires `ad_storage` and `ad_user_data`; same History Change trigger as GA4. Add only if the Pixel's automatic history tracking is off; otherwise rely on it and add nothing. |
+| Meta `PageView` on navigation | Requires `ad_storage` and `ad_user_data`; trigger Custom Event **`mktbd_route_change`**, firing option Unlimited. |
 | Exceptions on every tag except CookieYes | Page Path starts with `/admin`; Page Hostname doesn't match `^(www\.)?mktbd\.co$`. |
 
 **Governance.** Publishing is limited to one or two named people, with
