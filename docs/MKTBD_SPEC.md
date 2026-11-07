@@ -1951,10 +1951,16 @@ consent banner are configured inside the container, never in the app.
   `wait_for_update: 500`, plus `ads_data_redaction`. It runs once per
   document (`next/script`, `afterInteractive`), so client-side navigation
   never reloads GTM or resets consent.
-- **In-page blocklist.** `gtm.blocklist: ["customScripts"]` disables
-  Custom HTML tags and Custom JavaScript variables whatever is published,
-  so only Google's tags and sandboxed gallery templates can run. This also
-  keeps `'unsafe-eval'` out of the CSP.
+- **In-page allowlist and blocklist.** One push before `gtm.js`:
+  `gtm.blocklist: ["customScripts"]` disables Custom HTML tags and Custom
+  JavaScript variables whatever is published. Google documents that
+  blocklisting any class also implicitly blocks the sandboxed JavaScript of
+  custom templates, so `gtm.allowlist: ["sandboxedScripts"]` re-enables
+  gallery templates (CookieYes, Meta Pixel); that class applies no
+  allowlist conditions to other classes, and the blocklist still wins.
+  Only Google's tags and sandboxed gallery templates can run. This also
+  keeps `'unsafe-eval'` out of the CSP. Source:
+  https://developers.google.com/tag-platform/tag-manager/web/restrict
 - **The app pushes nothing else** to the dataLayer: no page views, no
   `config`. Page views are the container's job.
 - **CSP** (`ANALYTICS_CSP_SOURCES`, production only): `script-src` adds
