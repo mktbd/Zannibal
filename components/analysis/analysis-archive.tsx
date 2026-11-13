@@ -1,12 +1,12 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from "react";
 import { Container } from "@/components/site/primitives";
 import { DiscoveryControls } from "@/components/archive/discovery-controls";
 import { LoadMore, NoResults, ResultsError } from "@/components/archive/results-states";
 import { useArchiveFeed } from "@/components/archive/use-archive-feed";
-import { viewerSlugFromPath, type ArchiveCard, type ArchivePage, type ArchiveTag } from "@/lib/analysis-archive";
+import { viewerCanonicalUrl, viewerDocumentTitle, viewerSlugFromPath, type ArchiveCard, type ArchivePage, type ArchiveTag } from "@/lib/analysis-archive";
 import { AnalysisCard } from "./analysis-card";
 import { AnalysisViewer, type ViewerContent } from "./analysis-viewer";
 
@@ -31,6 +31,9 @@ type ViewerData = { slug: string; title: string; slides: string[]; article: { sl
  * pops it and closes the viewer, Forward reopens it. Slides are fetched
  * from /api/analysis/[slug] when an Analysis is first opened and kept for
  * reopening; a direct visit to /analysis/[slug] arrives with them already.
+ * As no page is rendered, the archive also keeps the tab title and the
+ * canonical link in step: the open Analysis's, or the archive's once the
+ * viewer closes.
  */
 export function AnalysisArchive({
   initialPage,
@@ -88,6 +91,27 @@ export function AnalysisArchive({
           article: null,
         }
     : null;
+
+  // Tab title for the open Analysis (or the archive). A layout effect, so it
+  // is in place before any passive effect of the same commit reads it (the
+  // analytics route event in components/site/analytics-events.tsx). Only the
+  // open slug and its title matter: moving between slides changes neither.
+  // Not restored on unmount: the next page's own metadata sets its title.
+  const documentTitle = viewerDocumentTitle(openSlug, typeof cached === "object" ? cached.title : knownTitle);
+  useLayoutEffect(() => {
+    if (documentTitle !== null && document.title !== documentTitle) document.title = documentTitle;
+  }, [documentTitle]);
+
+  // Canonical link for the open Analysis (or the archive), e.g. for a
+  // browser's Share. Only the existing link's href changes -- never a new
+  // element -- and it is the page's own metadata element, so leaving the
+  // archive replaces it with the next page's. Open Graph tags stay as served.
+  useLayoutEffect(() => {
+    for (const link of document.querySelectorAll<HTMLLinkElement>('link[rel="canonical"]')) {
+      const href = viewerCanonicalUrl(link.getAttribute("href"), openSlug);
+      if (href !== null && link.getAttribute("href") !== href) link.setAttribute("href", href);
+    }
+  }, [openSlug]);
 
   // When the viewer closes (button, Escape, backdrop or Back), return focus
   // to the card it was opened from -- or, if that card isn't loaded (a

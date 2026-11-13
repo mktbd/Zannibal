@@ -109,3 +109,39 @@ export function viewerSlugFromPath(pathname: string | null): string | null {
   const match = /^\/analysis\/([^/?#]+)\/?$/.exec(pathname ?? "");
   return match ? decodeURIComponent(match[1]) : null;
 }
+
+/**
+ * The archive's own tab title: its metadata title ("Analysis") in the public
+ * layout's "%s | mktbd" template, as rendered on /analysis.
+ */
+export const ARCHIVE_DOCUMENT_TITLE = "Analysis | mktbd";
+
+/**
+ * The tab title for the archive's state. Opening a card only pushes
+ * /analysis/[slug] (no navigation), so no page metadata is rendered: the
+ * archive keeps the title itself, the same as the Analysis page's own
+ * ("<title> | mktbd"). Null while the open Analysis's title isn't known yet,
+ * meaning: leave the tab as it is.
+ */
+export function viewerDocumentTitle(openSlug: string | null, title: string | null | undefined): string | null {
+  if (!openSlug) return ARCHIVE_DOCUMENT_TITLE;
+  return title ? `${title} | mktbd` : null;
+}
+
+/**
+ * The canonical URL for the archive's state, on the origin of the page's
+ * existing canonical link (the site's canonical origin, which the browser
+ * doesn't otherwise know): /analysis/<slug> while the viewer shows an
+ * Analysis -- the same as that page's own canonical -- and /analysis once it
+ * closes. Null if the existing href isn't an absolute URL (leave it alone).
+ */
+export function viewerCanonicalUrl(existingCanonical: string | null, openSlug: string | null): string | null {
+  let origin: string;
+  try {
+    origin = new URL(existingCanonical ?? "").origin;
+  } catch {
+    return null;
+  }
+  if (origin === "null") return null;
+  return `${origin}${openSlug ? `/analysis/${encodeURIComponent(openSlug)}` : "/analysis"}`;
+}

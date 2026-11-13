@@ -11,8 +11,12 @@ import {
   orderedSlideUrls,
   parseFeedParams,
   toArchiveEntry,
+  viewerCanonicalUrl,
+  viewerDocumentTitle,
   viewerSlugFromPath,
+  ARCHIVE_DOCUMENT_TITLE,
 } from "../../lib/analysis-archive.ts";
+import { readFileSync } from "node:fs";
 
 const url = (path) => `https://cdn.test/${path}`;
 const row = (over = {}) => ({
@@ -120,4 +124,67 @@ test("viewerSlugFromPath", () => {
   assert.equal(viewerSlugFromPath("/analysis"), null);
   assert.equal(viewerSlugFromPath("/analysis/a/b"), null);
   assert.equal(viewerSlugFromPath(null), null);
+});
+
+// --- Tab title while the archive's viewer is open (shallow pushState, no page render) ---
+
+const source = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), "utf8");
+
+test("viewer tab title: the open Analysis's title in the site template; the archive's when closed; unchanged while unknown", () => {
+  assert.equal(viewerDocumentTitle("bkash-agents", "How bKash Turned Agents Into a Distribution Moat"), "How bKash Turned Agents Into a Distribution Moat | mktbd");
+  assert.equal(viewerDocumentTitle(null, undefined), ARCHIVE_DOCUMENT_TITLE);
+  assert.equal(viewerDocumentTitle(null, "Leftover title"), ARCHIVE_DOCUMENT_TITLE, "closed: always the archive's");
+  for (const unknown of [undefined, null, ""]) assert.equal(viewerDocumentTitle("not-loaded-yet", unknown), null, "no placeholder title");
+});
+
+test("viewer tab titles match what the pages' own metadata renders", () => {
+  // Public layout template "%s | mktbd" (app/(public)/layout.tsx) ...
+  assert.match(source("app/(public)/layout.tsx"), /template: "%s \| mktbd"/);
+  // ... applied to the archive's title "Analysis" (app/(public)/analysis/page.tsx) ...
+  assert.match(source("app/(public)/analysis/page.tsx"), /^\s*title: "Analysis",$/m);
+  assert.equal(ARCHIVE_DOCUMENT_TITLE, "Analysis | mktbd");
+  // ... and to the Analysis title on /analysis/[slug], which is what the viewer shows.
+  assert.match(source("app/(public)/analysis/[slug]/page.tsx"), /^\s*title: analysis\.title,$/m);
+});
+
+test("the archive sets the tab title in a layout effect keyed only on the title; slides never touch history", () => {
+  const archive = source("components/analysis/analysis-archive.tsx");
+  assert.match(archive, /const documentTitle = viewerDocumentTitle\(openSlug, typeof cached === "object" \? cached\.title : knownTitle\);/);
+  assert.match(archive, /useLayoutEffect\(\(\) => \{\s*if \(documentTitle !== null && document\.title !== documentTitle\) document\.title = documentTitle;\s*\}, \[documentTitle\]\);/);
+  assert.equal((archive.match(/document\.title\s*=/g) ?? []).length, 1, "one place sets the title");
+  // History behaviour unchanged: one push on open, back or replace on close.
+  assert.equal((archive.match(/window\.history\.pushState\(/g) ?? []).length, 1);
+  assert.equal(/history|document\.title/.test(source("components/analysis/analysis-viewer.tsx")), false, "the viewer (slide changes) touches neither history nor the title");
+});
+
+test("viewer canonical: /analysis/<slug> while open, /analysis when closed, on the existing link's origin", () => {
+  const site = "https://mktbd.co/analysis";
+  assert.equal(viewerCanonicalUrl(site, "what-is-chajoy-actually-selling"), "https://mktbd.co/analysis/what-is-chajoy-actually-selling");
+  assert.equal(viewerCanonicalUrl(site, null), "https://mktbd.co/analysis");
+  // A direct visit starts on the Analysis's own canonical; closing returns to the archive's.
+  assert.equal(viewerCanonicalUrl("https://mktbd.co/analysis/a-b", null), "https://mktbd.co/analysis");
+  assert.equal(viewerCanonicalUrl("https://mktbd.co/analysis/a-b", "c-d"), "https://mktbd.co/analysis/c-d");
+  // The canonical origin is kept even where the page is served from elsewhere (local, preview).
+  assert.equal(viewerCanonicalUrl("https://mktbd.co/analysis?x=1#y", "e"), "https://mktbd.co/analysis/e");
+  // Same path shape as the Analysis page's own canonical (`/analysis/${analysis.slug}`).
+  assert.match(source("app/(public)/analysis/[slug]/page.tsx"), /const path = `\/analysis\/\$\{analysis\.slug\}`;[\s\S]*alternates: \{ canonical: path \}/);
+  assert.match(source("app/(public)/analysis/page.tsx"), /alternates: \{ canonical: "\/analysis" \}/);
+  // Not an absolute URL: leave the link alone.
+  for (const bad of [null, "", "/analysis", "not a url", "about:blank"]) assert.equal(viewerCanonicalUrl(bad, "x"), null, String(bad));
+});
+
+test("the archive only edits the existing canonical href, keyed on the open slug; creates nothing; leaves Open Graph alone", () => {
+  const archive = source("components/analysis/analysis-archive.tsx");
+  assert.match(archive, /useLayoutEffect\(\(\) => \{\s*for \(const link of document\.querySelectorAll<HTMLLinkElement>\('link\[rel="canonical"\]'\)\) \{[\s\S]*?\}\s*\}, \[openSlug\]\);/);
+  assert.equal(/createElement|appendChild|insertBefore|prepend\(|append\(|innerHTML/.test(archive), false, "no new elements");
+  assert.equal((archive.match(/setAttribute\(/g) ?? []).length, 1);
+  assert.match(archive, /link\.setAttribute\("href", href\)/);
+  assert.equal(/og:|property=|twitter:/.test(archive), false, "Open Graph and Twitter tags untouched");
+});
+
+test("the tab title follows the Analysis data when its title arrives later (not in the loaded cards)", () => {
+  // Title unknown while loading -> leave the tab; once fetched -> its title. The effect is keyed on the result.
+  assert.equal(viewerDocumentTitle("beyond-first-batch", undefined), null);
+  assert.equal(viewerDocumentTitle("beyond-first-batch", "Fetched Title"), "Fetched Title | mktbd");
+  assert.match(source("components/analysis/analysis-archive.tsx"), /typeof cached === "object" \? cached\.title : knownTitle/);
 });
